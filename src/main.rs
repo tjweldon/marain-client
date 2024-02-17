@@ -9,7 +9,6 @@ use crossterm::{
     terminal::{enable_raw_mode, EnterAlternateScreen},
     ExecutableCommand,
 };
-use log::error;
 use ratatui::prelude::{CrosstermBackend, Terminal};
 use std::io::stdout;
 
@@ -61,7 +60,6 @@ async fn run() -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::try_init()?;
-    error!("RED ALERT");
     let result = run().await;
 
     result?;

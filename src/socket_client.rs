@@ -5,7 +5,7 @@ use futures_util::{
     stream::{SplitSink, SplitStream},
     StreamExt,
 };
-use log::error;
+use log::{error, info};
 use tokio::{
     net::TcpStream,
     sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
@@ -26,8 +26,11 @@ pub struct SocketConf {
 
 impl SocketConf {
     fn url(&self) -> Url {
-        Url::parse(&format!("ws://{}:{}", self.host, self.port))
-            .expect("Failed to parse the socket url")
+        let url = Url::parse(&format!("ws://{}:{}", self.host, self.port))
+            .expect("Failed to parse the socket url");
+        info!("Parsed socket url: {}", url);
+
+        url
     }
 
     pub fn spawn_client(&self) -> SocketClient {
@@ -64,8 +67,9 @@ impl SocketClient {
         inbound_sink: UnboundedSender<String>,
         conf: SocketConf,
     ) {
+        let url = conf.url();
         let (ws_stream, _smth): (WebSocketStream<MaybeTlsStream<TcpStream>>, Response) =
-            connect_async(conf.url()).await.expect("Failed to connect");
+            connect_async(url.clone()).await.expect(&format!("Failed to connect to {}", url));
 
         let (ws_sink, ws_source): (
             SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
