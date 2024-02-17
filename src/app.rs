@@ -1,9 +1,13 @@
 use chrono::prelude::*;
 use crossterm::event::KeyCode;
-use futures::executor::Enter;
+use log::info;
+use ratatui::{
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+};
 use std::{
     collections::{HashMap, VecDeque},
-    fmt::{write, Display},
+    fmt::Display,
 };
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -18,11 +22,19 @@ impl Display for Mode {
     }
 }
 
+#[derive(Hash, Debug, Clone)]
+pub enum CaretMotion {
+    Character,
+    Line,
+}
+
 #[derive(Debug, Clone, Hash)]
 pub enum Command {
     Reset,
     Quit,
     Capture(char),
+    Del(isize),
+    MoveCaret(CaretMotion, isize),
     Enter(Mode),
     SendBuffer,
 }
@@ -34,6 +46,8 @@ impl Display for Command {
             Reset => "Reset",
             Quit => "Quit",
             Capture(_) => "",
+            MoveCaret(_, _) => "",
+            Del(_) => "",
             Enter(Mode::Navigate) => "Enter Navigation Mode",
             Enter(Mode::Insert) => "Enter Insert Mode",
             SendBuffer => "Send Message",
@@ -60,7 +74,8 @@ impl Display for Log {
 #[derive(Debug)]
 pub struct App {
     pub should_quit: bool,
-    pub buffer: String,
+    pub buffer: Vec<String>,
+    pub caret_offset: (usize, usize),
     pub logs: VecDeque<Log>,
     pub mode: Mode,
     pub keymaps: ModalKeyMaps,
@@ -72,7 +87,8 @@ impl App {
         Self {
             should_quit: false,
             mode: Mode::Navigate,
-            buffer: "".into(),
+            buffer: vec!["".into()],
+            caret_offset: (1, 1),
             logs: VecDeque::new(),
             keymaps: ModalKeyMaps::default(),
             username: format!("User {}", Utc::now().timestamp_micros() % 1024,),
@@ -80,6 +96,7 @@ impl App {
     }
 
     pub fn map_key(&self, code: KeyCode) -> Option<Command> {
+        info!("App mapping key {code:?}");
         self.keymaps.get_cmd(&self.mode, code)
     }
 
@@ -99,29 +116,177 @@ impl App {
         self.keymaps.show(&self.mode, sep)
     }
 
+    pub fn get_caret_2d(&self) -> (usize, usize) {
+        self.caret_offset
+    }
+
+    pub fn set_caret_2d(&mut self, row: usize, col: usize) {
+        self.caret_offset.0 = row.clamp(1, self.buffer.len());
+        self.caret_offset.1 = col.clamp(1, self.buffer[row.checked_sub(1).unwrap_or(0)].len() + 1);
+    }
+
+    pub fn render_buf(&self) -> String {
+        self.buffer.iter().fold("".to_string(), |acc, el| acc + &el)
+    }
+
+    pub fn split_current_at_caret(&self) -> (String, String) {
+        let (row, col) = self.get_caret_2d();
+
+        let buf_line = self.buffer[row.checked_sub(1).unwrap_or(0)].clone();
+        let (pre, post) = if buf_line.len() > 0 {
+            buf_line.split_at(col - 1)
+        } else {
+            (buf_line.as_str(), "")
+        };
+        let pre = pre.to_string();
+
+        let (mut up_to, mut caret_and_beyond) = ("".to_string(), "".to_string());
+        up_to = up_to + &pre;
+
+        let post = post.to_string();
+        caret_and_beyond = caret_and_beyond + &post;
+
+        (up_to, caret_and_beyond)
+    }
+
+    pub fn render_buf_styled(&self) -> Line {
+        let mut line_vec: Vec<Span> = vec![];
+        let (row, col) = self.get_caret_2d();
+        let preceding_chunk = self
+            .buffer
+            .iter()
+            .take(row - 1)
+            .fold(String::from(""), |acc, el| acc + &el);
+
+        if preceding_chunk.len() > 0 {
+            line_vec.push(Span::raw(preceding_chunk));
+        }
+
+        let buf_line = self.buffer[row.checked_sub(1).unwrap_or(0)].clone();
+        let (pre, post) = if buf_line.len() > 0 {
+            buf_line.split_at(col - 1)
+        } else {
+            (buf_line.as_str(), "")
+        };
+        let post = post.to_string();
+        let pre = pre.to_string();
+        line_vec.push(Span::raw(pre));
+
+        let blinkin = Style::default()
+            .bg(Color::Green)
+            .fg(Color::Black)
+            .add_modifier(Modifier::SLOW_BLINK);
+        let highlighted = match post.len() {
+            0 => Span::styled(" ".to_string(), blinkin),
+            _ => Span::styled(post.clone().chars().take(1).collect::<String>(), blinkin),
+        };
+
+        line_vec.push(highlighted);
+
+        let rest_of_line = Span::raw(post.clone().chars().skip(1).collect::<String>());
+        line_vec.push(rest_of_line);
+
+        let subsequent_lines = self
+            .buffer
+            .iter()
+            .skip(row)
+            .fold(String::from(""), |acc, el| acc + &el);
+        line_vec.push(Span::raw(subsequent_lines));
+
+        Line::from(line_vec)
+    }
+
     pub fn handle(&mut self, cmd: Command) {
         match cmd {
             Command::Quit => {
                 self.should_quit = true;
             }
             Command::Reset => {
-                self.buffer = "".into();
+                self.buffer = vec!["".into()];
+                self.caret_offset = (1, 1);
             }
             Command::Capture(c) => {
-                self.buffer.push(c);
+                self.handle_capture(c);
             }
             Command::Enter(mode) => {
-                self.mode = mode;
+                self.switch_mode(mode);
             }
             Command::SendBuffer => {
-                self.logs
-                    .push_front(Log(Utc::now(), self.username.clone(), self.buffer.clone()));
-                if self.logs.len() > 100 {
-                    self.logs.pop_back();
-                }
-                self.buffer = "".into();
+                self.handle_send();
             }
+            Command::MoveCaret(motion, amount) => {
+                self.handle_caret_move(motion, amount);
+            }
+            Command::Del(offset) => self.handle_deletion(offset),
+        };
+        info!("Caret: {:?}", self.caret_offset);
+    }
+
+    fn handle_deletion(&mut self, offset: isize) {
+        let (pre, post) = self.split_current_at_caret();
+        let (row, col) = self.get_caret_2d();
+        let line_with_removal = match offset.signum() < 0 {
+            false => {
+                if post.len() >= 1 {
+                    pre + &String::from(post.chars().skip(1).collect::<String>())
+                } else {
+                    pre + &post
+                }
+            }
+            true => {
+                if pre.len() >= 1 {
+                    self.set_caret_2d(row, col - 1);
+                    String::from(pre.chars().take(pre.len() - 1).collect::<String>() + &post)
+                } else {
+                    pre + &post
+                }
+            }
+        };
+        self.buffer[row.checked_sub(1).unwrap_or(0)] = line_with_removal;
+    }
+
+    fn handle_caret_move(&mut self, motion: CaretMotion, amount: isize) {
+        let (row, col) = self.get_caret_2d();
+        let new_caret = match motion {
+            CaretMotion::Character => (row, (col as isize + amount).max(0) as usize),
+            CaretMotion::Line => ((row as isize + amount).max(0) as usize, col),
+        };
+        self.set_caret_2d(new_caret.0, new_caret.1);
+    }
+
+    fn switch_mode(&mut self, mode: Mode) {
+        self.mode = mode;
+        match self.mode {
+            Mode::Insert => {
+                let (r, c) = self.get_caret_2d();
+                self.set_caret_2d(r, c);
+            }
+            Mode::Navigate => {}
         }
+    }
+
+    fn handle_send(&mut self) {
+        self.logs
+            .push_front(Log(Utc::now(), self.username.clone(), self.render_buf()));
+        if self.logs.len() > 100 {
+            self.logs.pop_back();
+        }
+        self.buffer = vec!["".into()];
+        self.caret_offset = (1, 1);
+    }
+
+    fn handle_capture(&mut self, c: char) {
+        let (row, col) = self.get_caret_2d();
+        let mut buf_line = self.buffer[row.checked_sub(1).unwrap_or(0)].clone();
+        if col < buf_line.len() {
+            let post = buf_line.split_off(col);
+            buf_line.push(c);
+            buf_line = buf_line + &post;
+        } else {
+            buf_line.push(c);
+        }
+        self.buffer[row.checked_sub(1).unwrap_or(0)] = buf_line;
+        self.caret_offset = (self.caret_offset.0, self.caret_offset.1 + 1);
     }
 }
 
@@ -220,9 +385,26 @@ impl Default for ModalKeyMaps {
                 (
                     Mode::Insert,
                     vec![
+                        // leave insert mode
                         KeyBinds::Explicit(KeyCode::Esc, Command::Enter(Mode::Navigate)),
+                        // send message
                         KeyBinds::Explicit(KeyCode::Enter, Command::SendBuffer),
+                        // Caret controls
+                        KeyBinds::Explicit(
+                            KeyCode::Left,
+                            Command::MoveCaret(CaretMotion::Character, -1),
+                        ),
+                        KeyBinds::Explicit(
+                            KeyCode::Right,
+                            Command::MoveCaret(CaretMotion::Character, 1),
+                        ),
+                        KeyBinds::Explicit(KeyCode::Up, Command::MoveCaret(CaretMotion::Line, -1)),
+                        KeyBinds::Explicit(KeyCode::Down, Command::MoveCaret(CaretMotion::Line, 1)),
+                        // text input
                         KeyBinds::capture(),
+                        // deletion
+                        KeyBinds::Explicit(KeyCode::Backspace, Command::Del(-1)),
+                        KeyBinds::Explicit(KeyCode::Delete, Command::Del(0)),
                     ],
                 ),
             ]),

@@ -8,19 +8,26 @@ use crossterm::{
     terminal::{enable_raw_mode, EnterAlternateScreen},
     ExecutableCommand,
 };
+use log::error;
 use ratatui::prelude::{CrosstermBackend, Terminal};
-use std::io::stderr;
+use std::io::stdout;
 
 use crate::app::App;
 use crate::update::update;
 use tui_framework::*;
 
 fn setup() -> Result<(App, Tui)> {
-    stderr().execute(EnterAlternateScreen)?;
+    stdout().execute(EnterAlternateScreen)?;
     enable_raw_mode()?;
 
-    let terminal = Terminal::new(CrosstermBackend::new(stderr()))?;
-    let mut tui = Tui::new(terminal);
+    let terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
+    let mut tui = Tui::from_conf(
+        terminal,
+        TuiConf {
+            update_freq: 30.0,
+            ..TuiConf::default()
+        },
+    );
     tui.enter()?;
     let app = App::new();
 
@@ -46,6 +53,8 @@ async fn run() -> Result<()> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    env_logger::try_init()?;
+    error!("RED ALERT");
     let result = run().await;
 
     result?;

@@ -14,11 +14,12 @@ use tokio::{
     task::JoinHandle,
 };
 
-pub type CrosstermTerminal = ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stderr>>;
+pub type CrosstermTerminal = ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>;
 
 use crate::{app::App, ui};
 
 /// Terminal events.
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub enum Event {
     /// App Initialization
@@ -57,6 +58,20 @@ impl From<KeyCode> for Event {
     }
 }
 
+pub struct TuiConf {
+    pub update_freq: f64,
+    pub render_freq: f64,
+}
+
+impl Default for TuiConf {
+    fn default() -> Self {
+        Self {
+            update_freq: 60.0,
+            render_freq: 60.0,
+        }
+    }
+}
+
 /// Representation of a terminal user interface.
 ///
 ///
@@ -89,6 +104,12 @@ impl Tui {
             frame_rate: 60.0,
             update_rate: 60.0,
         }
+    }
+
+    pub fn from_conf(terminal: CrosstermTerminal, config: TuiConf) -> Self {
+        Self::new(terminal)
+            .set_render_freq(config.render_freq)
+            .set_update_freq(config.update_freq)
     }
 
     /// Fluent setter for the render frequency.
@@ -143,7 +164,7 @@ impl Tui {
     /// the terminal properties if unexpected errors occur.
     fn reset() -> Result<()> {
         terminal::disable_raw_mode()?;
-        crossterm::execute!(io::stderr(), LeaveAlternateScreen, DisableMouseCapture)?;
+        crossterm::execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture)?;
         Ok(())
     }
 
@@ -173,6 +194,7 @@ impl Tui {
 
                 tokio::select! {
                     maybe_input = input_event => {
+                        // user events
                         match maybe_input {
                             Some(Ok(evt)) => match evt {
                                 CrosstermEvent::Key(key) => {
@@ -194,9 +216,11 @@ impl Tui {
                             None => {},
                         }
                     },
+                    // backend/app update trigger
                     _update_tick = update_delay => {
                         sender.send(Event::Tick).unwrap();
                     },
+                    // render trigger
                     _frame_tick = render_delay => {
                         sender.send(Event::Render).unwrap();
                     }
