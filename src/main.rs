@@ -1,4 +1,5 @@
 mod app;
+mod socket_client;
 mod tui_framework;
 mod ui;
 mod update;
@@ -27,9 +28,11 @@ fn setup() -> Result<(App, Tui)> {
             update_freq: 30.0,
             ..TuiConf::default()
         },
-    );
+    )
+    .default_client();
     tui.enter()?;
-    let app = App::new();
+    let mut app = App::new();
+    app.set_send_chan(tui.get_sender());
 
     Ok((app, tui))
 }
@@ -41,6 +44,10 @@ async fn run() -> Result<()> {
         let event = tui.next().await?;
         if let Event::Render = event {
             tui.draw(&mut app)?;
+        }
+
+        if let Event::Send(_) = event {
+            tui.push_server_msg(event.clone());
         }
 
         update(&mut app, event);

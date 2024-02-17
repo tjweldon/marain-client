@@ -9,6 +9,9 @@ use std::{
     collections::{HashMap, VecDeque},
     fmt::Display,
 };
+use tokio::sync::mpsc::UnboundedSender;
+
+use crate::tui_framework::Event;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum Mode {
@@ -57,7 +60,7 @@ impl Display for Command {
 }
 
 #[derive(Clone, Debug)]
-pub struct Log(DateTime<Utc>, String, String);
+pub struct Log(pub DateTime<Utc>, pub String, pub String);
 
 impl Display for Log {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -80,6 +83,7 @@ pub struct App {
     pub mode: Mode,
     pub keymaps: ModalKeyMaps,
     pub username: String,
+    pub send_chan: Option<UnboundedSender<Event>>,
 }
 
 impl App {
@@ -92,7 +96,12 @@ impl App {
             logs: VecDeque::new(),
             keymaps: ModalKeyMaps::default(),
             username: format!("User {}", Utc::now().timestamp_micros() % 1024,),
+            send_chan: None,
         }
+    }
+
+    pub fn set_send_chan(&mut self, chan: UnboundedSender<Event>) {
+        self.send_chan = Some(chan);
     }
 
     pub fn map_key(&self, code: KeyCode) -> Option<Command> {
@@ -265,14 +274,22 @@ impl App {
         }
     }
 
-    fn handle_send(&mut self) {
-        self.logs
-            .push_front(Log(Utc::now(), self.username.clone(), self.render_buf()));
+    pub fn handle_send(&mut self) {
+        let chat_log = Log(Utc::now(), self.username.clone(), self.render_buf());
+        if let Some(ref chan) = self.send_chan {
+            let Ok(_) = chan.send(Event::Send(format!("{chat_log}"))) else {
+                return;
+            };
+        }
+        self.push_log(chat_log);
+        self.buffer = vec!["".into()];
+        self.caret_offset = (1, 1);
+    }
+    pub fn push_log(&mut self, log: Log) {
+        self.logs.push_front(log);
         if self.logs.len() > 100 {
             self.logs.pop_back();
         }
-        self.buffer = vec!["".into()];
-        self.caret_offset = (1, 1);
     }
 
     fn handle_capture(&mut self, c: char) {
