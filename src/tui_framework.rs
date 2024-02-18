@@ -256,7 +256,7 @@ impl Tui {
                                 CrosstermEvent::Resize(w, h) => {
                                     update_sender.send(Event::Resize(w, h)).unwrap();
                                 }
-                                _ => unimplemented!(),
+                                _ => info!("Handler not implemented for: {:?}", evt),
                             },
                             Some(Err(_)) => {
                                 update_sender.send(Event::Error).unwrap();
