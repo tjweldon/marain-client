@@ -4,11 +4,14 @@ mod tui_framework;
 mod ui;
 mod update;
 
+use chrono::{DateTime, Utc};
 use color_eyre::Result;
 use crossterm::{
     terminal::{enable_raw_mode, EnterAlternateScreen},
     ExecutableCommand,
 };
+use env_logger::Env;
+use marain_api::prelude::{ClientMsg, ClientMsgBody, Timestamp};
 use ratatui::prelude::{CrosstermBackend, Terminal};
 use std::io::stdout;
 
@@ -29,8 +32,13 @@ fn setup() -> Result<(App, Tui)> {
         },
     )
     .default_client();
-    tui.enter()?;
     let mut app = App::new();
+
+    tui.enter(ClientMsg {
+        token: None, 
+        body: ClientMsgBody::Login(app.username.clone()), 
+        timestamp: Timestamp::from(Utc::now())}
+    )?;
     app.set_send_chan(tui.get_sender());
 
     Ok((app, tui))
@@ -59,7 +67,13 @@ async fn run() -> Result<()> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    env_logger::try_init()?;
+    use env_logger::{Builder, Target};
+    
+    let mut builder = Builder::new();
+    builder.parse_env(Env::default());
+    builder.target(Target::Stderr);
+    builder.build();
+
     let result = run().await;
 
     result?;

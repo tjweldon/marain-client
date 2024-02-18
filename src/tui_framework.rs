@@ -9,6 +9,8 @@ use crossterm::{
     terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use futures::{stream::StreamExt, FutureExt};
+use log::info;
+use marain_api::prelude::{ClientMsg, ClientMsgBody};
 use tokio::{
     sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
     task::JoinHandle,
@@ -153,7 +155,7 @@ impl Tui {
     /// Initializes the terminal interface.
     ///
     /// It enables the raw mode and sets terminal properties.
-    pub fn enter(&mut self) -> Result<()> {
+    pub fn enter(&mut self, login_msg: ClientMsg) -> Result<()> {
         terminal::enable_raw_mode()?;
         crossterm::execute!(io::stderr(), EnterAlternateScreen, EnableMouseCapture)?;
 
@@ -167,7 +169,7 @@ impl Tui {
 
         self.terminal.hide_cursor()?;
         self.terminal.clear()?;
-        self.start();
+        self.start(login_msg);
         Ok(())
     }
 
@@ -204,12 +206,20 @@ impl Tui {
     }
 
     /// Starts the async event loop
-    pub fn start(&mut self) {
+    pub fn start(&mut self, on_connect: ClientMsg) {
         let update_delay = std::time::Duration::from_secs_f64(1.0 / self.update_rate);
         let render_delay = std::time::Duration::from_secs_f64(1.0 / self.frame_rate);
         let client: SocketClient = self.socket_conf.spawn_client();
-        self.socket_sender = Some(client.out_sink.clone());
-        let sender = self.sender.clone();
+        let socket_sender = client.out_sink.clone();
+        socket_sender
+            .unbounded_send(serde_json::to_string(&on_connect).expect("The api code is broken"))
+            .expect("Could not connect to the marain server.");
+        self.socket_sender = Some(socket_sender.clone());
+        info!("Sent login message to {:?}", self.socket_conf.url());
+
+        let update_sender = self.sender.clone();
+
+        // worker code -----
         let task = tokio::spawn(async move {
             let mut reader = crossterm::event::EventStream::new();
             let mut update_interval = tokio::time::interval(update_delay);
@@ -226,7 +236,7 @@ impl Tui {
                     maybe_recv = server_event => {
                         match maybe_recv {
                             Ok(message) => {
-                                sender.send(Event::Recv(message)).unwrap();
+                                update_sender.send(Event::Recv(message)).unwrap();
                             },
                             _ => {},
                         }
@@ -237,34 +247,35 @@ impl Tui {
                             Some(Ok(evt)) => match evt {
                                 CrosstermEvent::Key(key) => {
                                     if key.kind == KeyEventKind::Press {
-                                        sender.send(Event::Key(key)).unwrap();
+                                        update_sender.send(Event::Key(key)).unwrap();
                                     }
                                 }
                                 CrosstermEvent::Mouse(e) => {
-                                    sender.send(Event::Mouse(e)).unwrap();
+                                    update_sender.send(Event::Mouse(e)).unwrap();
                                 }
                                 CrosstermEvent::Resize(w, h) => {
-                                    sender.send(Event::Resize(w, h)).unwrap();
+                                    update_sender.send(Event::Resize(w, h)).unwrap();
                                 }
                                 _ => unimplemented!(),
                             },
                             Some(Err(_)) => {
-                                sender.send(Event::Error).unwrap();
+                                update_sender.send(Event::Error).unwrap();
                             },
                             None => {},
                         }
                     },
                     // backend/app update trigger
                     _update_tick = update_delay => {
-                        sender.send(Event::Tick).unwrap();
+                        update_sender.send(Event::Tick).unwrap();
                     },
                     // render trigger
                     _frame_tick = render_delay => {
-                        sender.send(Event::Render).unwrap();
+                        update_sender.send(Event::Render).unwrap();
                     }
                 }
             }
         });
+        // end worker code --
 
         self.task = Some(task);
     }

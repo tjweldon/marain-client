@@ -62,12 +62,34 @@ impl Display for Command {
 #[derive(Clone, Debug)]
 pub struct Log(pub DateTime<Utc>, pub String, pub String);
 
+impl Log {
+    pub fn always_from_string(raw: String) -> Self {
+        let (mut metadata, msg) = match raw.split_once(": ") {
+            Some((l, r)) => (l.to_string(), r.to_string()),
+            None => ("UNKNOWN".into(), raw),
+        };
+
+        if metadata.starts_with("[") {
+            metadata = metadata.chars().skip(1).collect();
+        }
+        if metadata.ends_with("]") && metadata.len() > 0 {
+            metadata = metadata.chars().take(metadata.len() - 1).collect();
+        }
+
+        if let Some((_ts, uname)) = metadata.split_once(" | ") {
+            Log(Utc::now(), uname.trim().into(), msg)
+        } else {
+            Log(Utc::now(), "UNKNOWN".into(), msg)
+        }
+    }
+}
+
 impl Display for Log {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
             "[ {} | {} ]: {}",
-            self.0.format("%Y-%m-%d %H:%M:%S").to_string(),
+            self.0.format("%H-%M-%S").to_string(),
             self.1,
             self.2
         )
@@ -83,7 +105,7 @@ pub struct App {
     pub mode: Mode,
     pub keymaps: ModalKeyMaps,
     pub username: String,
-    pub send_chan: Option<UnboundedSender<Event>>,
+    pub server_command_sink: Option<UnboundedSender<Event>>,
 }
 
 impl App {
@@ -96,12 +118,12 @@ impl App {
             logs: VecDeque::new(),
             keymaps: ModalKeyMaps::default(),
             username: format!("User {}", Utc::now().timestamp_micros() % 1024,),
-            send_chan: None,
+            server_command_sink: None,
         }
     }
 
     pub fn set_send_chan(&mut self, chan: UnboundedSender<Event>) {
-        self.send_chan = Some(chan);
+        self.server_command_sink = Some(chan);
     }
 
     pub fn map_key(&self, code: KeyCode) -> Option<Command> {
@@ -276,7 +298,7 @@ impl App {
 
     pub fn handle_send(&mut self) {
         let chat_log = Log(Utc::now(), self.username.clone(), self.render_buf());
-        if let Some(ref chan) = self.send_chan {
+        if let Some(ref chan) = self.server_command_sink {
             let Ok(_) = chan.send(Event::Send(format!("{chat_log}"))) else {
                 return;
             };
@@ -285,6 +307,7 @@ impl App {
         self.buffer = vec!["".into()];
         self.caret_offset = (1, 1);
     }
+
     pub fn push_log(&mut self, log: Log) {
         self.logs.push_front(log);
         if self.logs.len() > 100 {

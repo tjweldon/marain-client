@@ -25,7 +25,10 @@ pub struct SocketConf {
 }
 
 impl SocketConf {
-    fn url(&self) -> Url {
+    pub fn url(&self) -> Url {
+        if self.host.contains("/") {
+            panic!("Just supply the hostname e.g. 'localhost'");
+        }
         let url = Url::parse(&format!("ws://{}:{}", self.host, self.port))
             .expect("Failed to parse the socket url");
         info!("Parsed socket url: {}", url);
