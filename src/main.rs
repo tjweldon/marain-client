@@ -1,4 +1,5 @@
 mod app;
+mod socket_client;
 mod tui_framework;
 mod ui;
 mod update;
@@ -8,7 +9,6 @@ use crossterm::{
     terminal::{enable_raw_mode, EnterAlternateScreen},
     ExecutableCommand,
 };
-use log::error;
 use ratatui::prelude::{CrosstermBackend, Terminal};
 use std::io::stdout;
 
@@ -27,9 +27,11 @@ fn setup() -> Result<(App, Tui)> {
             update_freq: 30.0,
             ..TuiConf::default()
         },
-    );
+    )
+    .default_client();
     tui.enter()?;
-    let app = App::new();
+    let mut app = App::new();
+    app.set_send_chan(tui.get_sender());
 
     Ok((app, tui))
 }
@@ -43,6 +45,10 @@ async fn run() -> Result<()> {
             tui.draw(&mut app)?;
         }
 
+        if let Event::Send(_) = event {
+            tui.push_server_msg(event.clone());
+        }
+
         update(&mut app, event);
     }
 
@@ -54,7 +60,6 @@ async fn run() -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::try_init()?;
-    error!("RED ALERT");
     let result = run().await;
 
     result?;

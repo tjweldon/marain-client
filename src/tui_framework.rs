@@ -16,11 +16,15 @@ use tokio::{
 
 pub type CrosstermTerminal = ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>;
 
-use crate::{app::App, ui};
+use crate::{
+    app::App,
+    socket_client::{SocketClient, SocketConf},
+    ui,
+};
 
 /// Terminal events.
 #[allow(dead_code)]
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
+#[derive(Clone, Debug, Hash, PartialEq, Eq)]
 pub enum Event {
     /// App Initialization
     Init,
@@ -44,6 +48,10 @@ pub enum Event {
     Mouse(MouseEvent),
     /// Terminal resize.
     Resize(u16, u16),
+    /// Inbound Message.
+    Recv(String),
+    /// Outbound Message.
+    Send(String),
 }
 
 impl From<char> for Event {
@@ -82,10 +90,12 @@ pub struct Tui {
     /// Interface to the Terminal.
     pub terminal: CrosstermTerminal,
     pub task: Option<JoinHandle<()>>,
+    pub socket_conf: SocketConf,
 
     pub receiver: UnboundedReceiver<Event>,
 
     pub sender: UnboundedSender<Event>,
+    pub socket_sender: Option<futures::channel::mpsc::UnboundedSender<String>>,
 
     pub frame_rate: f64,
 
@@ -99,6 +109,8 @@ impl Tui {
         Self {
             terminal,
             task: None,
+            socket_conf: SocketConf::default(),
+            socket_sender: None,
             sender,
             receiver,
             frame_rate: 60.0,
@@ -126,6 +138,16 @@ impl Tui {
         self.update_rate = ups;
 
         self
+    }
+
+    pub fn configure_client(mut self, conf: SocketConf) -> Self {
+        self.socket_conf = conf;
+
+        self
+    }
+
+    pub fn default_client(self) -> Self {
+        self.configure_client(SocketConf::default())
     }
 
     /// Initializes the terminal interface.
@@ -177,22 +199,38 @@ impl Tui {
         Ok(())
     }
 
+    pub fn get_sender(&self) -> UnboundedSender<Event> {
+        self.sender.clone()
+    }
+
     /// Starts the async event loop
     pub fn start(&mut self) {
         let update_delay = std::time::Duration::from_secs_f64(1.0 / self.update_rate);
         let render_delay = std::time::Duration::from_secs_f64(1.0 / self.frame_rate);
+        let client: SocketClient = self.socket_conf.spawn_client();
+        self.socket_sender = Some(client.out_sink.clone());
         let sender = self.sender.clone();
         let task = tokio::spawn(async move {
             let mut reader = crossterm::event::EventStream::new();
             let mut update_interval = tokio::time::interval(update_delay);
             let mut render_interval = tokio::time::interval(render_delay);
+            let mut client = client;
 
             loop {
                 let update_delay = update_interval.tick();
                 let render_delay = render_interval.tick();
                 let input_event = reader.next().fuse();
+                let server_event = client.next();
 
                 tokio::select! {
+                    maybe_recv = server_event => {
+                        match maybe_recv {
+                            Ok(message) => {
+                                sender.send(Event::Recv(message)).unwrap();
+                            },
+                            _ => {},
+                        }
+                    }
                     maybe_input = input_event => {
                         // user events
                         match maybe_input {
@@ -229,6 +267,12 @@ impl Tui {
         });
 
         self.task = Some(task);
+    }
+
+    pub fn push_server_msg(&self, send_event: Event) {
+        if let (Some(ref sender), Event::Send(msg)) = (self.socket_sender.clone(), send_event) {
+            sender.unbounded_send(msg).unwrap();
+        }
     }
 
     pub async fn next(&mut self) -> Result<Event> {
