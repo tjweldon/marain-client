@@ -49,8 +49,8 @@ impl Display for Command {
             Reset => "Reset",
             Quit => "Quit",
             Capture(_) => "",
-            MoveCaret(_, _) => "",
-            Del(_) => "",
+            MoveCaret(_, _) => "Move Cursor",
+            Del(_) => "Delete",
             Enter(Mode::Navigate) => "Enter Navigation Mode",
             Enter(Mode::Insert) => "Enter Insert Mode",
             SendBuffer => "Send Message",
@@ -332,6 +332,8 @@ impl Display for KeyBinds {
             Self::Explicit(KeyCode::Char(c), cmd) => write!(f, "{c}\t -> {cmd}"),
             Self::Explicit(KeyCode::Enter, cmd) => write!(f, "󰌑\t -> {cmd}"),
             Self::Explicit(KeyCode::Esc, cmd) => write!(f, "Esc\t -> {cmd}"),
+            Self::Explicit(KeyCode::Delete, cmd) => write!(f, "Del\t -> {cmd}"),
+            Self::Explicit(KeyCode::Left, cmd) => write!(f, "←/→\t -> {cmd}"),
             _ => write!(f, ""),
         }
     }
