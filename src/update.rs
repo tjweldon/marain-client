@@ -11,6 +11,12 @@ pub fn update(app: &mut App, event: Event) {
             };
             app.handle(cmd);
         }
+<<<<<<< Updated upstream
+=======
+        Event::Recv(msg) => {
+            app.push_log(Log::always_from_string(msg));
+        }
+>>>>>>> Stashed changes
         _ => {}
     }
 }
