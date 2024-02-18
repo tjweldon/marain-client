@@ -59,34 +59,12 @@ impl Display for Command {
 #[derive(Clone, Debug)]
 pub struct Log(DateTime<Utc>, String, String);
 
-impl Log {
-    pub fn always_from_string(raw: String) -> Self {
-        let (mut metadata, msg) = match raw.split_once(": ") {
-            Some((l, r)) => (l.to_string(), r.to_string()),
-            None => ("UNKNOWN".into(), raw),
-        };
-
-        if metadata.starts_with("[") {
-            metadata = metadata.chars().skip(1).collect();
-        }
-        if metadata.ends_with("]") && metadata.len() > 0 {
-            metadata = metadata.chars().take(metadata.len() - 1).collect();
-        }
-
-        if let Some((_ts, uname)) = metadata.split_once(" | ") {
-            Log(Utc::now(), uname.trim().into(), msg)
-        } else {
-            Log(Utc::now(), "UNKNOWN".into(), msg)
-        }
-    }
-}
-
 impl Display for Log {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
             "[ {} | {} ]: {}",
-            self.0.format("%H-%M-%S").to_string(),
+            self.0.format("%Y-%m-%d %H:%M:%S").to_string(),
             self.1,
             self.2
         )
@@ -102,10 +80,6 @@ pub struct App {
     pub mode: Mode,
     pub keymaps: ModalKeyMaps,
     pub username: String,
-<<<<<<< Updated upstream
-=======
-    pub server_command_sink: Option<UnboundedSender<Event>>,
->>>>>>> Stashed changes
 }
 
 impl App {
@@ -118,20 +92,9 @@ impl App {
             logs: VecDeque::new(),
             keymaps: ModalKeyMaps::default(),
             username: format!("User {}", Utc::now().timestamp_micros() % 1024,),
-<<<<<<< Updated upstream
         }
     }
 
-=======
-            server_command_sink: None,
-        }
-    }
-
-    pub fn set_send_chan(&mut self, chan: UnboundedSender<Event>) {
-        self.server_command_sink = Some(chan);
-    }
-
->>>>>>> Stashed changes
     pub fn map_key(&self, code: KeyCode) -> Option<Command> {
         info!("App mapping key {code:?}");
         self.keymaps.get_cmd(&self.mode, code)
@@ -302,26 +265,9 @@ impl App {
         }
     }
 
-<<<<<<< Updated upstream
     fn handle_send(&mut self) {
         self.logs
             .push_front(Log(Utc::now(), self.username.clone(), self.render_buf()));
-=======
-    pub fn handle_send(&mut self) {
-        let chat_log = Log(Utc::now(), self.username.clone(), self.render_buf());
-        if let Some(ref chan) = self.server_command_sink {
-            let Ok(_) = chan.send(Event::Send(format!("{chat_log}"))) else {
-                return;
-            };
-        }
-        self.push_log(chat_log);
-        self.buffer = vec!["".into()];
-        self.caret_offset = (1, 1);
-    }
-
-    pub fn push_log(&mut self, log: Log) {
-        self.logs.push_front(log);
->>>>>>> Stashed changes
         if self.logs.len() > 100 {
             self.logs.pop_back();
         }

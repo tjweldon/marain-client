@@ -534,19 +534,6 @@ dependencies = [
 ]
 
 [[package]]
-<<<<<<< Updated upstream
-=======
-name = "marain-api"
-version = "0.1.0"
-source = "git+https://github.com/tjweldon/marain-api.git?rev=refs/heads/main#cc0e8f6fec66e410d39d92ddd3f7bb36b1df9c7c"
-dependencies = [
- "chrono",
- "serde",
- "serde_json",
-]
-
-[[package]]
->>>>>>> Stashed changes
 name = "marain-client"
 version = "0.1.0"
 dependencies = [
@@ -557,7 +544,6 @@ dependencies = [
  "futures",
  "log",
  "ratatui",
- "serde_json",
  "tokio",
  "tokio-util",
 ]
