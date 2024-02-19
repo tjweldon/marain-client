@@ -4,7 +4,7 @@ mod tui_framework;
 mod ui;
 mod update;
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use color_eyre::Result;
 use crossterm::{
     terminal::{enable_raw_mode, EnterAlternateScreen},
@@ -35,10 +35,10 @@ fn setup() -> Result<(App, Tui)> {
     let mut app = App::new();
 
     tui.enter(ClientMsg {
-        token: None, 
-        body: ClientMsgBody::Login(app.username.clone()), 
-        timestamp: Timestamp::from(Utc::now())}
-    )?;
+        token: None,
+        body: ClientMsgBody::Login(app.username.clone()),
+        timestamp: Timestamp::from(Utc::now()),
+    })?;
     app.set_send_chan(tui.get_sender());
 
     Ok((app, tui))
@@ -52,12 +52,22 @@ async fn run() -> Result<()> {
         if let Event::Render = event {
             tui.draw(&mut app)?;
         }
+        update(&mut app, event.clone());
 
-        if let Event::Send(_) = event {
-            tui.push_server_msg(event.clone());
+        if let Event::Send {
+            token,
+            timestamp,
+            contents,
+            ..
+        } = event
+        {
+            let msg = ClientMsg {
+                token: Some(token),
+                body: ClientMsgBody::SendToRoom { contents },
+                timestamp: Timestamp::from(timestamp),
+            };
+            tui.push_msg_to_server(msg);
         }
-
-        update(&mut app, event);
     }
 
     tui.exit()?;
@@ -68,7 +78,7 @@ async fn run() -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     use env_logger::{Builder, Target};
-    
+
     let mut builder = Builder::new();
     builder.parse_env(Env::default());
     builder.target(Target::Stderr);

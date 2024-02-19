@@ -1,5 +1,6 @@
 use std::{io, panic};
 
+use chrono::{DateTime, Utc};
 use color_eyre::Result;
 use crossterm::{
     event::{
@@ -10,7 +11,7 @@ use crossterm::{
 };
 use futures::{stream::StreamExt, FutureExt};
 use log::info;
-use marain_api::prelude::{ClientMsg, ClientMsgBody};
+use marain_api::prelude::ClientMsg;
 use tokio::{
     sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
     task::JoinHandle,
@@ -53,7 +54,12 @@ pub enum Event {
     /// Inbound Message.
     Recv(String),
     /// Outbound Message.
-    Send(String),
+    Send {
+        token: String,
+        username: String,
+        timestamp: DateTime<Utc>,
+        contents: String,
+    },
 }
 
 impl From<char> for Event {
@@ -280,7 +286,7 @@ impl Tui {
         self.task = Some(task);
     }
 
-    pub fn push_server_msg(&self, send_event: Event) {
+    pub fn push_msg_to_server(&self, send_event: ClientMsg) {
         if let (Some(ref sender), Event::Send(msg)) = (self.socket_sender.clone(), send_event) {
             sender.unbounded_send(msg).unwrap();
         }
