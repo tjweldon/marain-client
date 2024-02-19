@@ -62,7 +62,7 @@ async fn run() -> Result<()> {
         } = event
         {
             let msg = ClientMsg {
-                token: Some(token),
+                token,
                 body: ClientMsgBody::SendToRoom { contents },
                 timestamp: Timestamp::from(timestamp),
             };

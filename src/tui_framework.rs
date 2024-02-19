@@ -55,7 +55,7 @@ pub enum Event {
     Recv(String),
     /// Outbound Message.
     Send {
-        token: String,
+        token: Option<String>,
         username: String,
         timestamp: DateTime<Utc>,
         contents: String,
@@ -287,8 +287,15 @@ impl Tui {
     }
 
     pub fn push_msg_to_server(&self, send_event: ClientMsg) {
-        if let (Some(ref sender), Event::Send(msg)) = (self.socket_sender.clone(), send_event) {
-            sender.unbounded_send(msg).unwrap();
+        let serialized = match serde_json::to_string(&send_event) {
+            Ok(s) => s.to_owned(),
+            Err(e) => {
+                log::error!("Could not serialize chat message {e}");
+                return;
+            }
+        };
+        if let Some(ref sender) = self.socket_sender.clone() {
+            sender.unbounded_send(serialized).unwrap();
         }
     }
 
