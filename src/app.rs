@@ -82,6 +82,18 @@ impl Log {
             Log(Utc::now(), "UNKNOWN".into(), msg)
         }
     }
+
+    pub fn get_ts(&self) -> DateTime<Utc> {
+        self.0.clone()
+    }
+    pub fn get_msg_body(&self) -> String {
+        self.2.clone()
+    }
+
+    #[allow(dead_code)]
+    pub fn get_username(&self) -> String {
+        self.1.clone()
+    }
 }
 
 impl Display for Log {
@@ -105,6 +117,7 @@ pub struct App {
     pub mode: Mode,
     pub keymaps: ModalKeyMaps,
     pub username: String,
+    pub token: Option<String>,
     pub server_command_sink: Option<UnboundedSender<Event>>,
 }
 
@@ -118,6 +131,7 @@ impl App {
             logs: VecDeque::new(),
             keymaps: ModalKeyMaps::default(),
             username: format!("User {}", Utc::now().timestamp_micros() % 1024,),
+            token: None,
             server_command_sink: None,
         }
     }
@@ -299,7 +313,12 @@ impl App {
     pub fn handle_send(&mut self) {
         let chat_log = Log(Utc::now(), self.username.clone(), self.render_buf());
         if let Some(ref chan) = self.server_command_sink {
-            let Ok(_) = chan.send(Event::Send(format!("{chat_log}"))) else {
+            let Ok(_) = chan.send(Event::Send {
+                token: self.token.clone(),
+                username: self.username.clone(),
+                timestamp: chat_log.get_ts(),
+                contents: chat_log.get_msg_body(),
+            }) else {
                 return;
             };
         }
@@ -313,6 +332,10 @@ impl App {
         if self.logs.len() > 100 {
             self.logs.pop_back();
         }
+    }
+
+    pub fn store_token(&mut self, token: String) {
+        self.token = Some(token);
     }
 
     fn handle_capture(&mut self, c: char) {

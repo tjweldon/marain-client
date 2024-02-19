@@ -72,7 +72,9 @@ impl SocketClient {
     ) {
         let url = conf.url();
         let (ws_stream, _smth): (WebSocketStream<MaybeTlsStream<TcpStream>>, Response) =
-            connect_async(url.clone()).await.expect(&format!("Failed to connect to {}", url));
+            connect_async(url.clone())
+                .await
+                .expect(&format!("Failed to connect to {}", url));
 
         let (ws_sink, ws_source): (
             SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
