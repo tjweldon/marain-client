@@ -18,6 +18,7 @@ use crate::tui_framework::Event;
 pub enum Mode {
     Navigate,
     Insert,
+    InsertCommand,
 }
 
 impl Display for Mode {
@@ -42,6 +43,9 @@ pub enum Command {
     Enter(Mode),
     SendBuffer,
     GetServerTime,
+    MoveRooms(Option<String>),
+    SendStagedCommand,
+    AbortStagedCommand,
 }
 
 impl Display for Command {
@@ -55,10 +59,23 @@ impl Display for Command {
             Del(_) => "Delete",
             Enter(Mode::Navigate) => "Enter Navigation Mode",
             Enter(Mode::Insert) => "Enter Insert Mode",
+            Enter(Mode::InsertCommand) => "Enter command params mode",
             SendBuffer => "Send Message",
             GetServerTime => "Get Server Time",
+            MoveRooms(..) => "Move rooms",
+            SendStagedCommand => "Send Staged Command",
+            AbortStagedCommand => "Abort Command Staging",
         };
         write!(f, "{s}")
+    }
+}
+
+impl Command {
+    fn parse_params(&self, params: String) -> Option<Self> {
+        match self {
+            Command::MoveRooms(None) => Some(Command::MoveRooms(Some(params))),
+            _ => None,
+        }
     }
 }
 
@@ -118,6 +135,7 @@ pub struct App {
     pub caret_offset: (usize, usize),
     pub logs: VecDeque<Log>,
     pub mode: Mode,
+    pub staged_command: Option<Command>,
     pub keymaps: ModalKeyMaps,
     pub username: String,
     pub token: Option<String>,
@@ -128,10 +146,11 @@ impl App {
     pub fn new() -> Self {
         Self {
             should_quit: false,
-            mode: Mode::Navigate,
             buffer: vec!["".into()],
             caret_offset: (1, 1),
             logs: VecDeque::new(),
+            mode: Mode::Navigate,
+            staged_command: None,
             keymaps: ModalKeyMaps::default(),
             username: format!("User {}", Utc::now().timestamp_micros() % 1024,),
             token: None,
@@ -267,6 +286,23 @@ impl App {
             }
             Command::Del(offset) => self.handle_deletion(offset),
             Command::GetServerTime => self.send_server_command(cmd),
+
+            // Any commands requiring user input should go here
+            Command::MoveRooms(None) => {
+                self.stage_command(cmd);
+                self.switch_mode(Mode::InsertCommand);
+            }
+
+            // this arm handles sending any parametrised commands
+            Command::SendStagedCommand => {
+                self.handle_send_staged_command();
+            }
+            Command::AbortStagedCommand => {
+                self.handle_abort_staged_command();
+            }
+
+            // ignored patterns
+            Command::MoveRooms(Some(_)) => {}
         };
         info!("Caret: {:?}", self.caret_offset);
     }
@@ -274,6 +310,7 @@ impl App {
     fn send_server_command(&self, cmd: Command) {
         let body = match cmd {
             Command::GetServerTime => ClientMsgBody::GetTime,
+            Command::MoveRooms(Some(target)) => ClientMsgBody::Move { target },
             _ => todo!(),
         };
         if let Some(ref chan) = self.server_command_sink {
@@ -323,6 +360,44 @@ impl App {
         self.set_caret_2d(new_caret.0, new_caret.1);
     }
 
+    fn stage_command(&mut self, command: Command) {
+        self.staged_command = Some(command);
+    }
+
+    pub fn input_area_name(&self) -> String {
+        match (self.mode.clone(), self.staged_command.clone()) {
+            (Mode::InsertCommand, Some(command)) => {
+                format!("CMD: {command}")
+            }
+            _ => "MSG".to_string(),
+        }
+    }
+
+    fn handle_send_staged_command(&mut self) {
+        let Some(cmd) = self.staged_command.clone() else {
+            log::error!("Called handler for sending staged command with no staged command");
+            return;
+        };
+        let param_string = self.render_buf();
+        if let Some(command_with_params) = cmd.parse_params(param_string) {
+            self.send_server_command(command_with_params);
+        }
+        self.buffer = vec!["".into()];
+        self.caret_offset = (1, 1);
+        self.staged_command = None;
+        self.switch_mode(Mode::Navigate);
+    }
+
+    fn handle_abort_staged_command(&mut self) {
+        if let Some(_) = self.staged_command.clone() {
+            self.staged_command = None;
+        }
+
+        self.buffer = vec!["".into()];
+        self.caret_offset = (1, 1);
+        self.switch_mode(Mode::Navigate);
+    }
+
     fn switch_mode(&mut self, mode: Mode) {
         self.mode = mode;
         match self.mode {
@@ -331,6 +406,7 @@ impl App {
                 self.set_caret_2d(r, c);
             }
             Mode::Navigate => {}
+            Mode::InsertCommand => {}
         }
     }
 
@@ -355,6 +431,13 @@ impl App {
         self.logs.push_front(log);
         if self.logs.len() > 100 {
             self.logs.pop_back();
+        }
+    }
+
+    pub fn replace_logs(&mut self, chat_logs: Vec<Log>) {
+        self.logs = VecDeque::new();
+        for log in chat_logs {
+            self.push_log(log);
         }
     }
 
@@ -470,6 +553,7 @@ impl Default for ModalKeyMaps {
                         KeyBinds::Explicit(KeyCode::Char('q'), Command::Quit),
                         KeyBinds::Explicit(KeyCode::Char('r'), Command::Reset),
                         KeyBinds::Explicit(KeyCode::Char('t'), Command::GetServerTime),
+                        KeyBinds::Explicit(KeyCode::Char('m'), Command::MoveRooms(None)),
                     ],
                 ),
                 (
@@ -479,6 +563,31 @@ impl Default for ModalKeyMaps {
                         KeyBinds::Explicit(KeyCode::Esc, Command::Enter(Mode::Navigate)),
                         // send message
                         KeyBinds::Explicit(KeyCode::Enter, Command::SendBuffer),
+                        // Caret controls
+                        KeyBinds::Explicit(
+                            KeyCode::Left,
+                            Command::MoveCaret(CaretMotion::Character, -1),
+                        ),
+                        KeyBinds::Explicit(
+                            KeyCode::Right,
+                            Command::MoveCaret(CaretMotion::Character, 1),
+                        ),
+                        KeyBinds::Explicit(KeyCode::Up, Command::MoveCaret(CaretMotion::Line, -1)),
+                        KeyBinds::Explicit(KeyCode::Down, Command::MoveCaret(CaretMotion::Line, 1)),
+                        // text input
+                        KeyBinds::capture(),
+                        // deletion
+                        KeyBinds::Explicit(KeyCode::Backspace, Command::Del(-1)),
+                        KeyBinds::Explicit(KeyCode::Delete, Command::Del(0)),
+                    ],
+                ),
+                (
+                    Mode::InsertCommand,
+                    vec![
+                        // leave insert mode
+                        KeyBinds::Explicit(KeyCode::Esc, Command::AbortStagedCommand),
+                        // send message
+                        KeyBinds::Explicit(KeyCode::Enter, Command::SendStagedCommand),
                         // Caret controls
                         KeyBinds::Explicit(
                             KeyCode::Left,

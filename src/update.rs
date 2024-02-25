@@ -8,12 +8,15 @@ use marain_api::prelude::{ChatMsg, ServerMsg, ServerMsgBody, Status};
 pub fn update(app: &mut App, event: Event) {
     match event {
         Event::Tick => {}
+
+        // User input event handling
         Event::Key(KeyEvent { code: key, .. }) => {
-            let Some(cmd) = app.map_key(key) else {
-                return;
-            };
-            app.handle(cmd);
+            if let Some(cmd) = app.map_key(key) {
+                app.handle(cmd);
+            }
         }
+
+        // Websocket event handling
         Event::Recv(msg) => {
             if let Ok(deserialized) = serde_json::from_str::<ServerMsg>(&msg) {
                 let timestamp_dt = Into::<Option<DateTime<Utc>>>::into(deserialized.timestamp);
@@ -56,7 +59,20 @@ pub fn update(app: &mut App, event: Event) {
                                 + &server_time.format("%Y-%m-%D %H:%M:%S").to_string(),
                         ))
                     }
-                    _ => {}
+                    ServerMsgBody::RoomData { logs, .. } => {
+                        let chat_logs: Vec<Log> = logs
+                            .iter()
+                            .map(|cm| {
+                                Log(
+                                    Into::<Option<DateTime<Utc>>>::into(cm.timestamp.clone())
+                                        .unwrap_or(Utc::now()),
+                                    cm.sender.clone(),
+                                    cm.content.clone(),
+                                )
+                            })
+                            .collect();
+                        app.replace_logs(chat_logs);
+                    }
                 }
             } else {
                 app.push_log(Log::always_from_string(msg));

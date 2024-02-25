@@ -62,7 +62,7 @@ fn chat_log_widget(app: &App) -> Paragraph {
 }
 
 fn textarea_widget(app: &App) -> Paragraph {
-    Paragraph::new(app.render_buf_styled()).block(Block::bordered().title("MSG"))
+    Paragraph::new(app.render_buf_styled()).block(Block::bordered().title(app.input_area_name()))
 }
 
 pub fn render(app: &App, frame: &mut Frame) {
