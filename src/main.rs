@@ -54,19 +54,36 @@ async fn run() -> Result<()> {
         }
         update(&mut app, event.clone());
 
-        if let Event::Send {
-            token,
-            timestamp,
-            contents,
-            ..
-        } = event
-        {
-            let msg = ClientMsg {
+        match event {
+            Event::Send {
                 token,
-                body: ClientMsgBody::SendToRoom { contents },
-                timestamp: Timestamp::from(timestamp),
-            };
-            tui.push_msg_to_server(msg);
+                timestamp,
+                contents,
+                ..
+            } => {
+                let msg = ClientMsg {
+                    token,
+                    body: ClientMsgBody::SendToRoom { contents },
+                    timestamp: Timestamp::from(timestamp),
+                };
+                tui.push_msg_to_server(msg);
+            }
+            Event::ServerCommand {
+                token,
+                timestamp,
+                message_body: ClientMsgBody::GetTime,
+                ..
+            } => {
+                let server_msg = ClientMsg {
+                    token,
+                    timestamp: Timestamp::from(timestamp),
+                    body: ClientMsgBody::GetTime,
+                };
+                tui.push_msg_to_server(server_msg);
+            }
+            _ => {
+                log::info!("No handling for {event:?}");
+            }
         }
     }
 
