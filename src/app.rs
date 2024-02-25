@@ -1,6 +1,7 @@
 use chrono::prelude::*;
 use crossterm::event::KeyCode;
 use log::info;
+use marain_api::prelude::ClientMsgBody;
 use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span},
@@ -40,6 +41,7 @@ pub enum Command {
     MoveCaret(CaretMotion, isize),
     Enter(Mode),
     SendBuffer,
+    GetServerTime,
 }
 
 impl Display for Command {
@@ -54,6 +56,7 @@ impl Display for Command {
             Enter(Mode::Navigate) => "Enter Navigation Mode",
             Enter(Mode::Insert) => "Enter Insert Mode",
             SendBuffer => "Send Message",
+            GetServerTime => "Get Server Time",
         };
         write!(f, "{s}")
     }
@@ -263,8 +266,29 @@ impl App {
                 self.handle_caret_move(motion, amount);
             }
             Command::Del(offset) => self.handle_deletion(offset),
+            Command::GetServerTime => self.send_server_command(cmd),
         };
         info!("Caret: {:?}", self.caret_offset);
+    }
+
+    fn send_server_command(&self, cmd: Command) {
+        let body = match cmd {
+            Command::GetServerTime => ClientMsgBody::GetTime,
+            _ => todo!(),
+        };
+        if let Some(ref chan) = self.server_command_sink {
+            match chan.send(Event::ServerCommand {
+                token: self.token.clone(),
+                username: self.username.clone(),
+                timestamp: Utc::now(),
+                message_body: body,
+            }) {
+                Err(e) => {
+                    log::error!("Failed to send server: {e}");
+                }
+                _ => {}
+            };
+        }
     }
 
     fn handle_deletion(&mut self, offset: isize) {
@@ -445,6 +469,7 @@ impl Default for ModalKeyMaps {
                         KeyBinds::Explicit(KeyCode::Char('i'), Command::Enter(Mode::Insert)),
                         KeyBinds::Explicit(KeyCode::Char('q'), Command::Quit),
                         KeyBinds::Explicit(KeyCode::Char('r'), Command::Reset),
+                        KeyBinds::Explicit(KeyCode::Char('t'), Command::GetServerTime),
                     ],
                 ),
                 (

@@ -44,8 +44,10 @@ impl SocketConf {
 impl Default for SocketConf {
     fn default() -> Self {
         Self {
-            host: std::env::args().nth(1).unwrap(),
-            port: "1337".into(),
+            host: std::env::args()
+                .nth(1)
+                .expect("Provide a host as the first position arg"),
+            port: std::env::args().nth(2).unwrap_or("1337".into()),
         }
     }
 }

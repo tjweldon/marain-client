@@ -11,7 +11,7 @@ use crossterm::{
 };
 use futures::{stream::StreamExt, FutureExt};
 use log::info;
-use marain_api::prelude::ClientMsg;
+use marain_api::prelude::{ClientMsg, ClientMsgBody};
 use tokio::{
     sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
     task::JoinHandle,
@@ -59,6 +59,13 @@ pub enum Event {
         username: String,
         timestamp: DateTime<Utc>,
         contents: String,
+    },
+    /// Command (not chat) to be sent to the server
+    ServerCommand {
+        token: Option<String>,
+        username: String,
+        timestamp: DateTime<Utc>,
+        message_body: ClientMsgBody,
     },
 }
 
