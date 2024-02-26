@@ -71,13 +71,13 @@ async fn run() -> Result<()> {
             Event::ServerCommand {
                 token,
                 timestamp,
-                message_body: ClientMsgBody::GetTime,
+                message_body,
                 ..
             } => {
                 let server_msg = ClientMsg {
                     token,
                     timestamp: Timestamp::from(timestamp),
-                    body: ClientMsgBody::GetTime,
+                    body: message_body,
                 };
                 tui.push_msg_to_server(server_msg);
             }
