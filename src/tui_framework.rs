@@ -12,10 +12,12 @@ use crossterm::{
 use futures::{stream::StreamExt, FutureExt};
 use log::info;
 use marain_api::prelude::{ClientMsg, ClientMsgBody};
+use serde_binary::binary_stream::Endian;
 use tokio::{
     sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
     task::JoinHandle,
 };
+use tokio_tungstenite::tungstenite::Message;
 
 pub type CrosstermTerminal = ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>;
 
@@ -110,7 +112,7 @@ pub struct Tui {
     pub receiver: UnboundedReceiver<Event>,
 
     pub sender: UnboundedSender<Event>,
-    pub socket_sender: Option<futures::channel::mpsc::UnboundedSender<String>>,
+    pub socket_sender: Option<futures::channel::mpsc::UnboundedSender<Message>>,
 
     pub frame_rate: f64,
 
@@ -225,7 +227,9 @@ impl Tui {
         let client: SocketClient = self.socket_conf.spawn_client();
         let socket_sender = client.out_sink.clone();
         socket_sender
-            .unbounded_send(serde_json::to_string(&on_connect).expect("The api code is broken"))
+            .unbounded_send(Message::Binary(
+                serde_binary::to_vec(&on_connect, Endian::Little).expect("The api code is broken"),
+            ))
             .expect("Could not connect to the marain server.");
         self.socket_sender = Some(socket_sender.clone());
         info!("Sent login message to {:?}", self.socket_conf.url());
@@ -249,7 +253,16 @@ impl Tui {
                     maybe_recv = server_event => {
                         match maybe_recv {
                             Ok(message) => {
-                                update_sender.send(Event::Recv(message)).unwrap();
+                                if message.is_text() {
+                                    update_sender.send(
+                                        Event::Recv(
+                                            message
+                                                .to_text()
+                                                .expect("Failed to extract text from WS Message")
+                                                .to_string()
+                                            )
+                                        ).unwrap();
+                                }
                             },
                             _ => {},
                         }
@@ -293,8 +306,8 @@ impl Tui {
         self.task = Some(task);
     }
 
-    pub fn push_msg_to_server(&self, send_event: ClientMsg) {
-        let serialized = match serde_json::to_string(&send_event) {
+    pub fn push_binary_msg_to_server(&self, send_event: ClientMsg) {
+        let serialized = match serde_binary::to_vec(&send_event, Endian::Little) {
             Ok(s) => s.to_owned(),
             Err(e) => {
                 log::error!("Could not serialize chat message {e}");
@@ -302,7 +315,7 @@ impl Tui {
             }
         };
         if let Some(ref sender) = self.socket_sender.clone() {
-            sender.unbounded_send(serialized).unwrap();
+            sender.unbounded_send(Message::Binary(serialized)).unwrap();
         }
     }
 

@@ -54,8 +54,8 @@ impl Default for SocketConf {
 
 pub struct SocketClient {
     _task: JoinHandle<()>,
-    pub out_sink: futures::channel::mpsc::UnboundedSender<String>,
-    pub in_source: UnboundedReceiver<String>,
+    pub out_sink: futures::channel::mpsc::UnboundedSender<Message>,
+    pub in_source: UnboundedReceiver<Message>,
 }
 
 impl Default for SocketClient {
@@ -68,8 +68,8 @@ impl SocketClient {
     /// This is the async process that handles forwarding of inbound and outbound messages to/from
     /// the socket stream.
     async fn work(
-        outbound_source: futures::channel::mpsc::UnboundedReceiver<String>,
-        inbound_sink: UnboundedSender<String>,
+        outbound_source: futures::channel::mpsc::UnboundedReceiver<Message>,
+        inbound_sink: UnboundedSender<Message>,
         conf: SocketConf,
     ) {
         let url = conf.url();
@@ -88,7 +88,7 @@ impl SocketClient {
                 Ok(msg) => {
                     let txt_msg = msg.into_text().unwrap_or("unreadable".into());
                     inbound_sink
-                        .send(txt_msg)
+                        .send(Message::Text(txt_msg))
                         .expect("Could not forward inbount message from SocketClient");
                 }
                 Err(e) => {
@@ -96,17 +96,15 @@ impl SocketClient {
                 }
             };
         });
-        let outbound_to_ws = outbound_source
-            .map(|s| Ok(Message::text(s)))
-            .forward(ws_sink);
+        let outbound_to_ws = outbound_source.map(|s| Ok(s)).forward(ws_sink);
 
         pin_mut!(ws_to_inbound, outbound_to_ws);
         future::select(ws_to_inbound, outbound_to_ws).await;
     }
 
     pub fn init(conf: SocketConf) -> Self {
-        let (out_sink, out_source) = unbounded::<String>();
-        let (in_sink, in_source) = unbounded_channel::<String>();
+        let (out_sink, out_source) = unbounded::<Message>();
+        let (in_sink, in_source) = unbounded_channel::<Message>();
         let _task = tokio::spawn(Self::work(out_source, in_sink, conf));
         Self {
             _task,
@@ -115,7 +113,7 @@ impl SocketClient {
         }
     }
 
-    pub async fn next(&mut self) -> Result<String> {
+    pub async fn next(&mut self) -> Result<Message> {
         self.in_source
             .recv()
             .await

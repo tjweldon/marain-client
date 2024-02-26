@@ -66,7 +66,7 @@ async fn run() -> Result<()> {
                     body: ClientMsgBody::SendToRoom { contents },
                     timestamp: Timestamp::from(timestamp),
                 };
-                tui.push_msg_to_server(msg);
+                tui.push_binary_msg_to_server(msg);
             }
             Event::ServerCommand {
                 token,
@@ -79,7 +79,7 @@ async fn run() -> Result<()> {
                     timestamp: Timestamp::from(timestamp),
                     body: message_body,
                 };
-                tui.push_msg_to_server(server_msg);
+                tui.push_binary_msg_to_server(server_msg);
             }
             _ => {
                 log::info!("No handling for {event:?}");
