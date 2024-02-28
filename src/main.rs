@@ -3,6 +3,7 @@ mod socket_client;
 mod tui_framework;
 mod ui;
 mod update;
+mod user_config;
 
 use chrono::Utc;
 use color_eyre::Result;
@@ -17,6 +18,7 @@ use std::io::stdout;
 
 use crate::app::App;
 use crate::update::update;
+use crate::user_config::load_config;
 use tui_framework::*;
 
 fn setup() -> Result<(App, Tui)> {
@@ -95,7 +97,10 @@ async fn run() -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     use env_logger::{Builder, Target};
-
+    if 1 < 2 {
+        println!("{:?}", load_config().await);
+        return Ok(());
+    }
     let mut builder = Builder::new();
     builder.parse_env(Env::default());
     builder.target(Target::Stderr);

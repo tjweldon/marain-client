@@ -22,3 +22,5 @@ url = "2.5.0"
 marain-api = { git = "https://github.com/tjweldon/marain-api.git", rev = "refs/heads/main"}
 serde_json = "1.0.113"
 serde-binary = "0.5.0"
+serde = { version = "1.0.197", features = ["derive"] }
+homedir = "0.2.1"
