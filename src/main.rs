@@ -3,6 +3,7 @@ mod socket_client;
 mod tui_framework;
 mod ui;
 mod update;
+mod user_config;
 
 use chrono::Utc;
 use color_eyre::Result;
@@ -10,19 +11,16 @@ use crossterm::{
     terminal::{enable_raw_mode, EnterAlternateScreen},
     ExecutableCommand,
 };
-use env_logger::Env;
 use marain_api::prelude::{ClientMsg, ClientMsgBody, Timestamp};
 use ratatui::prelude::{CrosstermBackend, Terminal};
 use std::io::stdout;
 
 use crate::app::App;
 use crate::update::update;
+use crate::user_config::load_config;
 use tui_framework::*;
 
-fn setup() -> Result<(App, Tui)> {
-    stdout().execute(EnterAlternateScreen)?;
-    enable_raw_mode()?;
-
+async fn setup() -> Result<(App, Tui)> {
     let terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
     let mut tui = Tui::from_conf(
         terminal,
@@ -32,20 +30,32 @@ fn setup() -> Result<(App, Tui)> {
         },
     )
     .default_client();
-    let mut app = App::new();
 
-    tui.enter(ClientMsg {
-        token: None,
-        body: ClientMsgBody::Login(app.username.clone()),
-        timestamp: Timestamp::from(Utc::now()),
-    })?;
+    let mut app = App::new(load_config().await);
+    let (client, token) = match tui
+        .connect(ClientMsg {
+            token: None,
+            body: ClientMsgBody::Login(app.username.clone()),
+            timestamp: Timestamp::from(Utc::now()),
+        })
+        .await
+    {
+        Some(x) => x,
+        None => panic!("Could not retrieve token from server"),
+    };
+
+    stdout().execute(EnterAlternateScreen)?;
+    enable_raw_mode()?;
+
+    tui.enter(client).await?;
+    app.token = Some(token);
     app.set_send_chan(tui.get_sender());
 
     Ok((app, tui))
 }
 
 async fn run() -> Result<()> {
-    let (mut app, mut tui) = setup()?;
+    let (mut app, mut tui) = setup().await?;
 
     while !app.should_quit {
         let event = tui.next().await?;
@@ -62,7 +72,7 @@ async fn run() -> Result<()> {
                 ..
             } => {
                 let msg = ClientMsg {
-                    token,
+                    token: Some(token),
                     body: ClientMsgBody::SendToRoom { contents },
                     timestamp: Timestamp::from(timestamp),
                 };
@@ -75,7 +85,7 @@ async fn run() -> Result<()> {
                 ..
             } => {
                 let server_msg = ClientMsg {
-                    token,
+                    token: Some(token),
                     timestamp: Timestamp::from(timestamp),
                     body: message_body,
                 };
@@ -94,12 +104,9 @@ async fn run() -> Result<()> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    use env_logger::{Builder, Target};
+    _ = log2::open("log.txt").module(true).start();
 
-    let mut builder = Builder::new();
-    builder.parse_env(Env::default());
-    builder.target(Target::Stderr);
-    builder.build();
+    log::error!("SANITY CHECK");
 
     let result = run().await;
 
