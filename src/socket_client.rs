@@ -5,7 +5,7 @@ use futures_util::{
     stream::{SplitSink, SplitStream},
     StreamExt,
 };
-use log::{error, info};
+use log2 as log;
 use tokio::{
     net::TcpStream,
     sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
@@ -31,13 +31,13 @@ impl SocketConf {
         }
         let url = Url::parse(&format!("ws://{}:{}", self.host, self.port))
             .expect("Failed to parse the socket url");
-        info!("Parsed socket url: {}", url);
+        log::info!("Parsed socket url: {}", url);
 
         url
     }
 
-    pub fn spawn_client(&self) -> SocketClient {
-        SocketClient::init(self.clone())
+    pub async fn spawn_client(&self) -> SocketClient {
+        SocketClient::init(self.clone()).await
     }
 }
 
@@ -58,20 +58,44 @@ pub struct SocketClient {
     pub in_source: UnboundedReceiver<Message>,
 }
 
-impl Default for SocketClient {
-    fn default() -> Self {
-        Self::init(SocketConf::default())
-    }
-}
-
 impl SocketClient {
     /// This is the async process that handles forwarding of inbound and outbound messages to/from
     /// the socket stream.
     async fn work(
         outbound_source: futures::channel::mpsc::UnboundedReceiver<Message>,
         inbound_sink: UnboundedSender<Message>,
-        conf: SocketConf,
+        ws_sink: SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>,
+        ws_source: SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
     ) {
+        let ws_to_inbound = ws_source.for_each(|message| async {
+            match message {
+                Ok(msg) => match msg {
+                    Message::Text(_) => {
+                        log::error!("Incorrect protocol detected");
+                    }
+                    Message::Binary(_) | Message::Close(_) => {
+                        inbound_sink
+                            .send(msg)
+                            .expect("Could not forward inbound message from SocketClient");
+                    }
+                    _ => {
+                        panic!("UNEXPECTED {msg:?}");
+                    }
+                },
+                Err(e) => {
+                    log::error!("SocketClient got error trying to read msg: {e}");
+                }
+            };
+        });
+        let outbound_to_ws = outbound_source.map(|s| Ok(s)).forward(ws_sink);
+
+        pin_mut!(ws_to_inbound, outbound_to_ws);
+        future::select(ws_to_inbound, outbound_to_ws).await;
+    }
+
+    pub async fn init(conf: SocketConf) -> Self {
+        let (out_sink, out_source) = unbounded::<Message>();
+        let (in_sink, in_source) = unbounded_channel::<Message>();
         let url = conf.url();
         let (ws_stream, _smth): (WebSocketStream<MaybeTlsStream<TcpStream>>, Response) =
             connect_async(url.clone())
@@ -83,29 +107,7 @@ impl SocketClient {
             SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>,
         ) = ws_stream.split();
 
-        let ws_to_inbound = ws_source.for_each(|message| async {
-            match message {
-                Ok(msg) => {
-                    let txt_msg = msg.into_text().unwrap_or("unreadable".into());
-                    inbound_sink
-                        .send(Message::Text(txt_msg))
-                        .expect("Could not forward inbount message from SocketClient");
-                }
-                Err(e) => {
-                    error!("SocketClient got error trying to read msg: {e}");
-                }
-            };
-        });
-        let outbound_to_ws = outbound_source.map(|s| Ok(s)).forward(ws_sink);
-
-        pin_mut!(ws_to_inbound, outbound_to_ws);
-        future::select(ws_to_inbound, outbound_to_ws).await;
-    }
-
-    pub fn init(conf: SocketConf) -> Self {
-        let (out_sink, out_source) = unbounded::<Message>();
-        let (in_sink, in_source) = unbounded_channel::<Message>();
-        let _task = tokio::spawn(Self::work(out_source, in_sink, conf));
+        let _task = tokio::spawn(Self::work(out_source, in_sink, ws_sink, ws_source));
         Self {
             _task,
             out_sink,

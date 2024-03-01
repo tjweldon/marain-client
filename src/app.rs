@@ -1,24 +1,26 @@
+use anyhow::Chain;
 use chrono::prelude::*;
 use crossterm::event::KeyCode;
-use log::info;
+use log2 as log;
 use marain_api::prelude::ClientMsgBody;
 use ratatui::{
-    style::{Color, Modifier, Style},
-    text::{Line, Span},
+    style::{Color, Modifier, Style, Stylize},
+    text::{Line, Span, Text},
 };
 use std::{
     collections::{HashMap, VecDeque},
-    fmt::Display,
+    fmt::{Debug, Display},
 };
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::tui_framework::Event;
+use crate::{tui_framework::Event, user_config::UserConfig};
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum Mode {
     Navigate,
     Insert,
     InsertCommand,
+    Disconnected,
 }
 
 impl Display for Mode {
@@ -46,6 +48,7 @@ pub enum Command {
     MoveRooms(Option<String>),
     SendStagedCommand,
     AbortStagedCommand,
+    ToggleDebug,
 }
 
 impl Display for Command {
@@ -60,11 +63,13 @@ impl Display for Command {
             Enter(Mode::Navigate) => "Enter Navigation Mode",
             Enter(Mode::Insert) => "Enter Insert Mode",
             Enter(Mode::InsertCommand) => "Enter command params mode",
+            Enter(Mode::Disconnected) => "Disconnect from server",
             SendBuffer => "Send Message",
             GetServerTime => "Get Server Time",
             MoveRooms(..) => "Move rooms",
             SendStagedCommand => "Send Staged Command",
             AbortStagedCommand => "Abort Command Staging",
+            ToggleDebug => "Toggle debug output",
         };
         write!(f, "{s}")
     }
@@ -79,40 +84,110 @@ impl Command {
     }
 }
 
+pub struct LogStyle {
+    time_style: Style,
+    uname_style: Style,
+    msg_style: Style,
+    delim_style: Style,
+    time_fmt: String,
+}
+
+impl Default for LogStyle {
+    fn default() -> Self {
+        Self {
+            time_style: Style::new().fg(Color::Gray).bg(Color::Black).italic(),
+            uname_style: Style::new().fg(Color::Yellow).bg(Color::Black).bold(),
+            msg_style: Style::new().fg(Color::White).bg(Color::Black),
+            delim_style: Style::new().fg(Color::Blue).bg(Color::Black),
+            time_fmt: "%H:%M:%S".to_string(),
+        }
+    }
+}
+
+impl LogStyle {
+    fn time(&self) -> Style {
+        self.time_style.clone()
+    }
+
+    fn time_fmt_str(&self) -> &str {
+        &self.time_fmt
+    }
+
+    fn uname(&self) -> Style {
+        self.uname_style.clone()
+    }
+
+    fn delims(&self) -> Style {
+        self.delim_style.clone()
+    }
+
+    fn msg(&self) -> Style {
+        self.msg_style.clone()
+    }
+}
+
 #[derive(Clone, Debug)]
-pub struct Log(pub DateTime<Utc>, pub String, pub String);
+pub struct Log {
+    pub ts: DateTime<Utc>,
+    pub from: String,
+    pub msg: String,
+    pub debug: bool,
+}
 
 impl Log {
-    pub fn always_from_string(raw: String) -> Self {
-        let (mut metadata, msg) = match raw.split_once(": ") {
-            Some((l, r)) => (l.to_string(), r.to_string()),
-            None => ("UNKNOWN".into(), raw),
-        };
+    pub fn new(uname: String, message: String) -> Self {
+        Self {
+            ts: Utc::now(),
+            from: uname,
+            msg: message,
+            debug: false,
+        }
+    }
 
-        if metadata.starts_with("[") {
-            metadata = metadata.chars().skip(1).collect();
-        }
-        if metadata.ends_with("]") && metadata.len() > 0 {
-            metadata = metadata.chars().take(metadata.len() - 1).collect();
-        }
+    pub fn new_debug(data: impl Debug) -> Self {
+        Self::new("DEBUG".into(), format!("{data:?}")).as_debug()
+    }
 
-        if let Some((_ts, uname)) = metadata.split_once(" | ") {
-            Log(Utc::now(), uname.trim().into(), msg)
-        } else {
-            Log(Utc::now(), "UNKNOWN".into(), msg)
-        }
+    pub fn as_debug(mut self) -> Self {
+        self.debug = true;
+
+        self
+    }
+
+    pub fn at(mut self, dt: DateTime<Utc>) -> Self {
+        self.ts = dt;
+
+        self
     }
 
     pub fn get_ts(&self) -> DateTime<Utc> {
-        self.0.clone()
+        self.ts.clone()
     }
     pub fn get_msg_body(&self) -> String {
-        self.2.clone()
+        self.msg.clone()
     }
 
     #[allow(dead_code)]
     pub fn get_username(&self) -> String {
-        self.1.clone()
+        self.from.clone()
+    }
+
+    pub fn should_render(&self, show_debug: bool) -> bool {
+        (!self.debug) || show_debug
+    }
+
+    pub fn render(&self, styles: &LogStyle) -> Line {
+        Line::default().spans([
+            Span::styled("[ ", styles.delims()),
+            Span::styled(
+                self.ts.format(styles.time_fmt_str()).to_string(),
+                styles.time(),
+            ),
+            Span::styled(" : ", styles.delims()),
+            Span::styled(self.get_username(), styles.uname()),
+            Span::styled(" ]: ", styles.delims()),
+            Span::styled(self.msg.clone(), styles.msg()),
+        ])
     }
 }
 
@@ -121,9 +196,9 @@ impl Display for Log {
         write!(
             f,
             "[ {} | {} ]: {}",
-            self.0.format("%H-%M-%S").to_string(),
-            self.1,
-            self.2
+            self.ts.format("%H:%M:%S").to_string(),
+            self.from,
+            self.msg
         )
     }
 }
@@ -131,6 +206,7 @@ impl Display for Log {
 #[derive(Debug)]
 pub struct App {
     pub should_quit: bool,
+    pub show_debug: bool,
     pub buffer: Vec<String>,
     pub caret_offset: (usize, usize),
     pub logs: VecDeque<Log>,
@@ -139,48 +215,54 @@ pub struct App {
     pub keymaps: ModalKeyMaps,
     pub username: String,
     pub token: Option<String>,
-    pub server_command_sink: Option<UnboundedSender<Event>>,
+    pub command_sink: Option<UnboundedSender<Event>>,
 }
 
 impl App {
-    pub fn new() -> Self {
+    pub fn new(config: UserConfig) -> Self {
         Self {
             should_quit: false,
+            show_debug: false,
             buffer: vec!["".into()],
             caret_offset: (1, 1),
             logs: VecDeque::new(),
             mode: Mode::Navigate,
             staged_command: None,
             keymaps: ModalKeyMaps::default(),
-            username: format!("User {}", Utc::now().timestamp_micros() % 1024,),
+            username: config.get_username(),
             token: None,
-            server_command_sink: None,
+            command_sink: None,
         }
     }
 
     pub fn set_send_chan(&mut self, chan: UnboundedSender<Event>) {
-        self.server_command_sink = Some(chan);
+        self.command_sink = Some(chan);
     }
 
     pub fn map_key(&self, code: KeyCode) -> Option<Command> {
-        info!("App mapping key {code:?}");
+        log::info!("App mapping key {code:?}");
         self.keymaps.get_cmd(&self.mode, code)
     }
 
-    pub fn show_logs(&self) -> String {
+    pub fn render_logs(&self, max_messages: usize, log_style: &LogStyle) -> Text {
         self.logs
             .iter()
+            .filter(|l| l.should_render(self.show_debug))
+            .collect::<Vec<_>>()
+            .iter()
+            .take(max_messages)
             .rev()
-            .map(|l| format!("{}", l))
-            .fold("".to_string(), |acc, el| acc + "\n" + &el)
+            .map(|l| l.render(log_style))
+            .collect::<Vec<Line>>()
+            .into()
     }
 
     pub fn show_current_mode(&self) -> String {
-        return format!("{}", self.mode);
+        format!("{}", self.mode)
     }
 
-    pub fn show_keys(&self, sep: &str) -> String {
-        self.keymaps.show(&self.mode, sep)
+    pub fn render_keymap(&self) -> Text {
+        self.keymaps.render(&self.mode)
     }
 
     pub fn get_caret_2d(&self) -> (usize, usize) {
@@ -189,7 +271,10 @@ impl App {
 
     pub fn set_caret_2d(&mut self, row: usize, col: usize) {
         self.caret_offset.0 = row.clamp(1, self.buffer.len());
-        self.caret_offset.1 = col.clamp(1, self.buffer[row.checked_sub(1).unwrap_or(0)].len() + 1);
+        self.caret_offset.1 = col.clamp(
+            1,
+            self.buffer[row.checked_sub(1).unwrap_or(0) % self.buffer.len()].len() + 1,
+        );
     }
 
     pub fn render_buf(&self) -> String {
@@ -263,6 +348,10 @@ impl App {
         Line::from(line_vec)
     }
 
+    pub fn handle_toggle_debug(&mut self) {
+        self.show_debug = !self.show_debug;
+    }
+
     pub fn handle(&mut self, cmd: Command) {
         match cmd {
             Command::Quit => {
@@ -286,6 +375,7 @@ impl App {
             }
             Command::Del(offset) => self.handle_deletion(offset),
             Command::GetServerTime => self.send_server_command(cmd),
+            Command::ToggleDebug => self.handle_toggle_debug(),
 
             // Any commands requiring user input should go here
             Command::MoveRooms(None) => {
@@ -304,7 +394,7 @@ impl App {
             // ignored patterns
             Command::MoveRooms(Some(_)) => {}
         };
-        info!("Caret: {:?}", self.caret_offset);
+        log::info!("Caret: {:?}", self.caret_offset);
     }
 
     fn send_server_command(&self, cmd: Command) {
@@ -313,9 +403,9 @@ impl App {
             Command::MoveRooms(Some(target)) => ClientMsgBody::Move { target },
             _ => todo!(),
         };
-        if let Some(ref chan) = self.server_command_sink {
+        if let (Some(ref chan), Some(tok)) = (self.command_sink.clone(), self.token.clone()) {
             match chan.send(Event::ServerCommand {
-                token: self.token.clone(),
+                token: tok.clone(),
                 username: self.username.clone(),
                 timestamp: Utc::now(),
                 message_body: body,
@@ -398,7 +488,7 @@ impl App {
         self.switch_mode(Mode::Navigate);
     }
 
-    fn switch_mode(&mut self, mode: Mode) {
+    pub fn switch_mode(&mut self, mode: Mode) {
         self.mode = mode;
         match self.mode {
             Mode::Insert => {
@@ -407,14 +497,15 @@ impl App {
             }
             Mode::Navigate => {}
             Mode::InsertCommand => {}
+            Mode::Disconnected => {}
         }
     }
 
     pub fn handle_send(&mut self) {
-        let chat_log = Log(Utc::now(), self.username.clone(), self.render_buf());
-        if let Some(ref chan) = self.server_command_sink {
+        let chat_log = Log::new(self.username.clone(), self.render_buf());
+        if let (Some(ref chan), Some(tok)) = (self.command_sink.clone(), self.token.clone()) {
             let Ok(_) = chan.send(Event::Send {
-                token: self.token.clone(),
+                token: tok.clone(),
                 username: self.username.clone(),
                 timestamp: chat_log.get_ts(),
                 contents: chat_log.get_msg_body(),
@@ -422,14 +513,24 @@ impl App {
                 return;
             };
         }
-        self.push_log(chat_log);
         self.buffer = vec!["".into()];
         self.caret_offset = (1, 1);
     }
 
+    pub fn push_debug_log(&mut self, data: impl Debug) {
+        self.logs.push_front(Log::new_debug(data));
+    }
+
+    fn log_count(&self) -> usize {
+        self.logs
+            .iter()
+            .filter(|l| l.should_render(self.show_debug))
+            .count()
+    }
+
     pub fn push_log(&mut self, log: Log) {
         self.logs.push_front(log);
-        if self.logs.len() > 100 {
+        if self.log_count() > 100 {
             self.logs.pop_back();
         }
     }
@@ -493,6 +594,31 @@ impl Display for KeyBinds {
 }
 
 impl KeyBinds {
+    pub fn render(&self) -> Option<Line> {
+        let s = LogStyle::default();
+        let styles = [s.time(), s.uname(), s.msg()];
+        let formatted = format!("{}", self);
+        if formatted.len() == 0 {
+            return None;
+        }
+
+        let splits = formatted.splitn(3, " ");
+
+        Some(
+            Line::default().spans(
+                splits
+                    .zip(styles)
+                    .map(|(chunk, style)| {
+                        Span::styled(
+                            format!("{:<width$}", chunk.to_string(), width = 5),
+                            style.clone(),
+                        )
+                    })
+                    .collect::<Vec<Span>>(),
+            ),
+        )
+    }
+
     pub fn check(&self, c: KeyCode) -> Option<Command> {
         match self {
             Self::Explicit(code, ref command) if code.clone() == c => Some(command.clone()),
@@ -531,7 +657,11 @@ impl ModalKeyMaps {
     fn show(&self, mode: &Mode, sep: &str) -> String {
         let mut result = "".to_string();
         if let Some(binds) = self.keymaps.get(mode) {
-            for item in binds {
+            result = match binds.get(0) {
+                Some(b) => format!("{b}"),
+                None => "".to_string(),
+            };
+            for item in binds.iter().skip(1) {
                 if format!("{}", item).len() > 0 {
                     result = result + sep + &format!("{item}");
                 }
@@ -540,12 +670,28 @@ impl ModalKeyMaps {
 
         result
     }
+
+    fn render(&self, mode: &Mode) -> Text {
+        if let Some(binds) = self.keymaps.get(mode) {
+            binds
+                .iter()
+                .filter_map(KeyBinds::render)
+                .collect::<Vec<Line>>()
+                .into()
+        } else {
+            Text::default()
+        }
+    }
 }
 
 impl Default for ModalKeyMaps {
     fn default() -> Self {
         Self {
             keymaps: HashMap::from([
+                (
+                    Mode::Disconnected,
+                    vec![KeyBinds::Explicit(KeyCode::Char('q'), Command::Quit)],
+                ),
                 (
                     Mode::Navigate,
                     vec![
@@ -554,6 +700,7 @@ impl Default for ModalKeyMaps {
                         KeyBinds::Explicit(KeyCode::Char('r'), Command::Reset),
                         KeyBinds::Explicit(KeyCode::Char('t'), Command::GetServerTime),
                         KeyBinds::Explicit(KeyCode::Char('m'), Command::MoveRooms(None)),
+                        KeyBinds::Explicit(KeyCode::Char('d'), Command::ToggleDebug),
                     ],
                 ),
                 (

@@ -1,3 +1,4 @@
+use chrono::Utc;
 use homedir::get_my_home;
 use serde::{Deserialize, Serialize};
 use std::env::current_dir;
@@ -17,11 +18,23 @@ impl Default for UserConfig {
     }
 }
 
+impl UserConfig {
+    pub fn get_username(&self) -> String {
+        match self.username {
+            Some(ref name) => name.clone(),
+            None => format!("User {}", Utc::now().timestamp_micros() % 1024,),
+        }
+    }
+}
+
 const CLIENT_CONF_PATH_ENV_VAR: &str = "MARAIN_CONFIG_PATH";
 
 pub fn config_path() -> PathBuf {
     match std::env::var(CLIENT_CONF_PATH_ENV_VAR) {
+        // if the env var is set
         Ok(p) => p.into(),
+
+        // fallback
         _ => match get_my_home() {
             Ok(Some(p)) => p
                 .join(PathBuf::from(".config"))

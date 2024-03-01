@@ -10,9 +10,8 @@ use crossterm::{
     terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use futures::{stream::StreamExt, FutureExt};
-use log::info;
-use marain_api::prelude::{ClientMsg, ClientMsgBody};
-use serde_binary::binary_stream::Endian;
+use log2 as log;
+use marain_api::prelude::{ClientMsg, ClientMsgBody, ServerMsg, ServerMsgBody, Status};
 use tokio::{
     sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
     task::JoinHandle,
@@ -54,21 +53,23 @@ pub enum Event {
     /// Terminal resize.
     Resize(u16, u16),
     /// Inbound Message.
-    Recv(String),
+    Recv(Vec<u8>),
     /// Outbound Message.
     Send {
-        token: Option<String>,
+        token: String,
         username: String,
         timestamp: DateTime<Utc>,
         contents: String,
     },
     /// Command (not chat) to be sent to the server
     ServerCommand {
-        token: Option<String>,
+        token: String,
         username: String,
         timestamp: DateTime<Utc>,
         message_body: ClientMsgBody,
     },
+    /// Server closed the socket connection
+    ServerClose,
 }
 
 impl From<char> for Event {
@@ -170,7 +171,7 @@ impl Tui {
     /// Initializes the terminal interface.
     ///
     /// It enables the raw mode and sets terminal properties.
-    pub fn enter(&mut self, login_msg: ClientMsg) -> Result<()> {
+    pub async fn enter(&mut self, client: SocketClient) -> Result<()> {
         terminal::enable_raw_mode()?;
         crossterm::execute!(io::stderr(), EnterAlternateScreen, EnableMouseCapture)?;
 
@@ -184,7 +185,8 @@ impl Tui {
 
         self.terminal.hide_cursor()?;
         self.terminal.clear()?;
-        self.start(login_msg);
+        self.start(client).await;
+
         Ok(())
     }
 
@@ -220,19 +222,44 @@ impl Tui {
         self.sender.clone()
     }
 
-    /// Starts the async event loop
-    pub fn start(&mut self, on_connect: ClientMsg) {
-        let update_delay = std::time::Duration::from_secs_f64(1.0 / self.update_rate);
-        let render_delay = std::time::Duration::from_secs_f64(1.0 / self.frame_rate);
-        let client: SocketClient = self.socket_conf.spawn_client();
+    pub async fn connect(&mut self, on_connect: ClientMsg) -> Option<(SocketClient, String)> {
+        let mut client: SocketClient = self.socket_conf.spawn_client().await;
         let socket_sender = client.out_sink.clone();
         socket_sender
             .unbounded_send(Message::Binary(
-                serde_binary::to_vec(&on_connect, Endian::Little).expect("The api code is broken"),
+                bincode::serialize(&on_connect).expect("The api code is broken"),
             ))
             .expect("Could not connect to the marain server.");
+
+        match client.next().await {
+            Ok(msg) => match msg.clone() {
+                Message::Binary(data) => match bincode::deserialize::<ServerMsg>(&data[..]) {
+                    Ok(ServerMsg {
+                        status: Status::Yes,
+                        body: ServerMsgBody::LoginSuccess { token },
+                        ..
+                    }) => Some((client, token)),
+                    _ => {
+                        log::error!("Login failed, could not deserialize server message: {msg:?}");
+                        None
+                    }
+                },
+                _ => {
+                    log::error!("Unexpected message format from server {msg:?}");
+                    None
+                }
+            },
+            _ => None,
+        }
+    }
+
+    /// Starts the async event loop
+    pub async fn start(&mut self, client: SocketClient) {
+        let update_delay = std::time::Duration::from_secs_f64(1.0 / self.update_rate);
+        let render_delay = std::time::Duration::from_secs_f64(1.0 / self.frame_rate);
+
+        let socket_sender = client.out_sink.clone();
         self.socket_sender = Some(socket_sender.clone());
-        info!("Sent login message to {:?}", self.socket_conf.url());
 
         let update_sender = self.sender.clone();
 
@@ -247,24 +274,27 @@ impl Tui {
                 let update_delay = update_interval.tick();
                 let render_delay = render_interval.tick();
                 let input_event = reader.next().fuse();
-                let server_event = client.next();
+                let server_event = client.next().fuse();
 
                 tokio::select! {
                     maybe_recv = server_event => {
                         match maybe_recv {
                             Ok(message) => {
-                                if message.is_text() {
-                                    update_sender.send(
-                                        Event::Recv(
-                                            message
-                                                .to_text()
-                                                .expect("Failed to extract text from WS Message")
-                                                .to_string()
-                                            )
-                                        ).unwrap();
+                                match message {
+                                    Message::Binary(data) => {
+                                        update_sender.send(Event::Recv(data)).unwrap();
+                                    }
+                                    Message::Close(_) => {
+                                        update_sender.send(Event::ServerClose).unwrap();
+                                    }
+                                    _ => {
+                                        panic!("No implementation for message:\n {message:#?}");
+                                    }
                                 }
                             },
-                            _ => {},
+                            Err(e) => {
+                                panic!("Failed to receive message over receiver: {e}");
+                            },
                         }
                     }
                     maybe_input = input_event => {
@@ -282,7 +312,7 @@ impl Tui {
                                 CrosstermEvent::Resize(w, h) => {
                                     update_sender.send(Event::Resize(w, h)).unwrap();
                                 }
-                                _ => info!("Handler not implemented for: {:?}", evt),
+                                _ => log::info!("Handler not implemented for: {:?}", evt),
                             },
                             Some(Err(_)) => {
                                 update_sender.send(Event::Error).unwrap();
@@ -306,8 +336,8 @@ impl Tui {
         self.task = Some(task);
     }
 
-    pub fn push_binary_msg_to_server(&self, send_event: ClientMsg) {
-        let serialized = match serde_binary::to_vec(&send_event, Endian::Little) {
+    pub fn push_binary_msg_to_server(&self, outgoing_msg: ClientMsg) {
+        let serialized = match bincode::serialize(&outgoing_msg) {
             Ok(s) => s.to_owned(),
             Err(e) => {
                 log::error!("Could not serialize chat message {e}");
