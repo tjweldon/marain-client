@@ -1,7 +1,7 @@
 use chrono::prelude::*;
 use crossterm::event::KeyCode;
 use log2 as log;
-use marain_api::prelude::ClientMsgBody;
+use marain_api::prelude::{ClientMsgBody, Key};
 use ratatui::{
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
@@ -100,6 +100,7 @@ pub struct App {
     pub keymaps: ModalKeyMaps,
     pub username: String,
     pub token: Option<String>,
+    shared_secret: Option<Key>,
     pub command_sink: Option<UnboundedSender<Event>>,
 }
 
@@ -116,8 +117,13 @@ impl App {
             keymaps: ModalKeyMaps::default(),
             username: config.get_username(),
             token: None,
+            shared_secret: None,
             command_sink: None,
         }
+    }
+
+    pub fn set_shared_secret(&mut self, shared_secret: Key) {
+        self.shared_secret = Some(shared_secret);
     }
 
     pub fn set_send_chan(&mut self, chan: UnboundedSender<Event>) {

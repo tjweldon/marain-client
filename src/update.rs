@@ -65,7 +65,9 @@ fn handle_server_msg(app: &mut App, deserialized: ServerMsg) {
     let dt = translate_ts(deserialized.timestamp.clone());
     // These are all success responses from the server
     match deserialized.body {
-        ServerMsgBody::LoginSuccess { token } => app.store_token(token),
+        ServerMsgBody::LoginSuccess { .. } => {
+            panic!("Received a second LoginSuccess message from the server.")
+        }
         ServerMsgBody::ChatRecv {
             chat_msg: ChatMsg {
                 sender, content, ..
