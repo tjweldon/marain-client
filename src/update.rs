@@ -48,7 +48,7 @@ pub fn update(app: &mut App, event: Event) {
 
                     // These are all success responses from the server
                     match deserialized.body {
-                        ServerMsgBody::LoginSuccess { token } => app.store_token(token),
+                        ServerMsgBody::LoginSuccess { token , public_key} => app.store_token(token),
                         ServerMsgBody::ChatRecv {
                             chat_msg:
                                 ChatMsg {

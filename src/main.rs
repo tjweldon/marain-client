@@ -12,13 +12,22 @@ use crossterm::{
     ExecutableCommand,
 };
 use marain_api::prelude::{ClientMsg, ClientMsgBody, Timestamp};
+use rand_core::OsRng;
 use ratatui::prelude::{CrosstermBackend, Terminal};
 use std::io::stdout;
+use x25519_dalek::{EphemeralSecret, PublicKey};
 
 use crate::app::App;
 use crate::update::update;
 use crate::user_config::load_config;
 use tui_framework::*;
+
+fn create_key_pair() -> (EphemeralSecret, PublicKey) {
+    let client_secret = EphemeralSecret::random_from_rng(OsRng);
+    let client_public = PublicKey::from(&client_secret);
+
+    (client_secret, client_public)
+}
 
 async fn setup() -> Result<(App, Tui)> {
     let terminal = Terminal::new(CrosstermBackend::new(stdout()))?;
@@ -32,10 +41,11 @@ async fn setup() -> Result<(App, Tui)> {
     .default_client();
 
     let mut app = App::new(load_config().await);
-    let (client, token) = match tui
+    let (client_secret, client_public) = create_key_pair();
+    let (client, token, server_public_key) = match tui
         .connect(ClientMsg {
             token: None,
-            body: ClientMsgBody::Login(app.username.clone()),
+            body: ClientMsgBody::Login(app.username.clone(), *client_public.as_bytes()),
             timestamp: Timestamp::from(Utc::now()),
         })
         .await
@@ -48,6 +58,8 @@ async fn setup() -> Result<(App, Tui)> {
     enable_raw_mode()?;
 
     tui.enter(client).await?;
+    let shared_secret = client_secret.diffie_hellman(&server_public_key);
+    app.set_shared_secret(*shared_secret.as_bytes());
     app.token = Some(token);
     app.set_send_chan(tui.get_sender());
 
