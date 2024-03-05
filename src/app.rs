@@ -3,7 +3,7 @@ use crossterm::event::KeyCode;
 use log2 as log;
 use marain_api::prelude::{ClientMsgBody, Key};
 use ratatui::{
-    style::{Color, Modifier, Style, Stylize},
+    style::{Color, Modifier, Style},
     text::{Line, Span, Text},
 };
 use std::{
@@ -12,7 +12,12 @@ use std::{
 };
 use tokio::sync::mpsc::UnboundedSender;
 
-use crate::{tui_framework::Event, user_config::UserConfig};
+use crate::{
+    chat_log::{Log, LogStyle},
+    default_keybinds,
+    tui_framework::Event,
+    user_config::UserConfig,
+};
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum Mode {
@@ -80,125 +85,6 @@ impl Command {
             Command::MoveRooms(None) => Some(Command::MoveRooms(Some(params))),
             _ => None,
         }
-    }
-}
-
-pub struct LogStyle {
-    time_style: Style,
-    uname_style: Style,
-    msg_style: Style,
-    delim_style: Style,
-    time_fmt: String,
-}
-
-impl Default for LogStyle {
-    fn default() -> Self {
-        Self {
-            time_style: Style::new().fg(Color::Gray).bg(Color::Black).italic(),
-            uname_style: Style::new().fg(Color::Yellow).bg(Color::Black).bold(),
-            msg_style: Style::new().fg(Color::White).bg(Color::Black),
-            delim_style: Style::new().fg(Color::Blue).bg(Color::Black),
-            time_fmt: "%H:%M:%S".to_string(),
-        }
-    }
-}
-
-impl LogStyle {
-    fn time(&self) -> Style {
-        self.time_style.clone()
-    }
-
-    fn time_fmt_str(&self) -> &str {
-        &self.time_fmt
-    }
-
-    fn uname(&self) -> Style {
-        self.uname_style.clone()
-    }
-
-    fn delims(&self) -> Style {
-        self.delim_style.clone()
-    }
-
-    fn msg(&self) -> Style {
-        self.msg_style.clone()
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct Log {
-    pub ts: DateTime<Utc>,
-    pub from: String,
-    pub msg: String,
-    pub debug: bool,
-}
-
-impl Log {
-    pub fn new(uname: String, message: String) -> Self {
-        Self {
-            ts: Utc::now(),
-            from: uname,
-            msg: message,
-            debug: false,
-        }
-    }
-
-    pub fn new_debug(data: impl Debug) -> Self {
-        Self::new("DEBUG".into(), format!("{data:?}")).as_debug()
-    }
-
-    pub fn as_debug(mut self) -> Self {
-        self.debug = true;
-
-        self
-    }
-
-    pub fn at(mut self, dt: DateTime<Utc>) -> Self {
-        self.ts = dt;
-
-        self
-    }
-
-    pub fn get_ts(&self) -> DateTime<Utc> {
-        self.ts.clone()
-    }
-    pub fn get_msg_body(&self) -> String {
-        self.msg.clone()
-    }
-
-    #[allow(dead_code)]
-    pub fn get_username(&self) -> String {
-        self.from.clone()
-    }
-
-    pub fn should_render(&self, show_debug: bool) -> bool {
-        (!self.debug) || show_debug
-    }
-
-    pub fn render(&self, styles: &LogStyle) -> Line {
-        Line::default().spans([
-            Span::styled("[ ", styles.delims()),
-            Span::styled(
-                self.ts.format(styles.time_fmt_str()).to_string(),
-                styles.time(),
-            ),
-            Span::styled(" : ", styles.delims()),
-            Span::styled(self.get_username(), styles.uname()),
-            Span::styled(" ]: ", styles.delims()),
-            Span::styled(self.msg.clone(), styles.msg()),
-        ])
-    }
-}
-
-impl Display for Log {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "[ {} | {} ]: {}",
-            self.ts.format("%H:%M:%S").to_string(),
-            self.from,
-            self.msg
-        )
     }
 }
 
@@ -347,7 +233,7 @@ impl App {
             .buffer
             .iter()
             .skip(row)
-            .fold(String::from(""), |acc, el| acc + &el);
+            .fold("".to_string(), |acc, el| acc + &el);
         line_vec.push(Span::raw(subsequent_lines));
 
         Line::from(line_vec)
@@ -659,23 +545,6 @@ impl ModalKeyMaps {
         return None;
     }
 
-    fn show(&self, mode: &Mode, sep: &str) -> String {
-        let mut result = "".to_string();
-        if let Some(binds) = self.keymaps.get(mode) {
-            result = match binds.get(0) {
-                Some(b) => format!("{b}"),
-                None => "".to_string(),
-            };
-            for item in binds.iter().skip(1) {
-                if format!("{}", item).len() > 0 {
-                    result = result + sep + &format!("{item}");
-                }
-            }
-        }
-
-        result
-    }
-
     fn render(&self, mode: &Mode) -> Text {
         if let Some(binds) = self.keymaps.get(mode) {
             binds
@@ -692,73 +561,7 @@ impl ModalKeyMaps {
 impl Default for ModalKeyMaps {
     fn default() -> Self {
         Self {
-            keymaps: HashMap::from([
-                (
-                    Mode::Disconnected,
-                    vec![KeyBinds::Explicit(KeyCode::Char('q'), Command::Quit)],
-                ),
-                (
-                    Mode::Navigate,
-                    vec![
-                        KeyBinds::Explicit(KeyCode::Char('i'), Command::Enter(Mode::Insert)),
-                        KeyBinds::Explicit(KeyCode::Char('q'), Command::Quit),
-                        KeyBinds::Explicit(KeyCode::Char('r'), Command::Reset),
-                        KeyBinds::Explicit(KeyCode::Char('t'), Command::GetServerTime),
-                        KeyBinds::Explicit(KeyCode::Char('m'), Command::MoveRooms(None)),
-                        KeyBinds::Explicit(KeyCode::Char('d'), Command::ToggleDebug),
-                    ],
-                ),
-                (
-                    Mode::Insert,
-                    vec![
-                        // leave insert mode
-                        KeyBinds::Explicit(KeyCode::Esc, Command::Enter(Mode::Navigate)),
-                        // send message
-                        KeyBinds::Explicit(KeyCode::Enter, Command::SendBuffer),
-                        // Caret controls
-                        KeyBinds::Explicit(
-                            KeyCode::Left,
-                            Command::MoveCaret(CaretMotion::Character, -1),
-                        ),
-                        KeyBinds::Explicit(
-                            KeyCode::Right,
-                            Command::MoveCaret(CaretMotion::Character, 1),
-                        ),
-                        KeyBinds::Explicit(KeyCode::Up, Command::MoveCaret(CaretMotion::Line, -1)),
-                        KeyBinds::Explicit(KeyCode::Down, Command::MoveCaret(CaretMotion::Line, 1)),
-                        // text input
-                        KeyBinds::capture(),
-                        // deletion
-                        KeyBinds::Explicit(KeyCode::Backspace, Command::Del(-1)),
-                        KeyBinds::Explicit(KeyCode::Delete, Command::Del(0)),
-                    ],
-                ),
-                (
-                    Mode::InsertCommand,
-                    vec![
-                        // leave insert mode
-                        KeyBinds::Explicit(KeyCode::Esc, Command::AbortStagedCommand),
-                        // send message
-                        KeyBinds::Explicit(KeyCode::Enter, Command::SendStagedCommand),
-                        // Caret controls
-                        KeyBinds::Explicit(
-                            KeyCode::Left,
-                            Command::MoveCaret(CaretMotion::Character, -1),
-                        ),
-                        KeyBinds::Explicit(
-                            KeyCode::Right,
-                            Command::MoveCaret(CaretMotion::Character, 1),
-                        ),
-                        KeyBinds::Explicit(KeyCode::Up, Command::MoveCaret(CaretMotion::Line, -1)),
-                        KeyBinds::Explicit(KeyCode::Down, Command::MoveCaret(CaretMotion::Line, 1)),
-                        // text input
-                        KeyBinds::capture(),
-                        // deletion
-                        KeyBinds::Explicit(KeyCode::Backspace, Command::Del(-1)),
-                        KeyBinds::Explicit(KeyCode::Delete, Command::Del(0)),
-                    ],
-                ),
-            ]),
+            keymaps: HashMap::from(default_keybinds::keys()),
         }
     }
 }

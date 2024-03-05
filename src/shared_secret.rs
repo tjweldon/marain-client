@@ -12,15 +12,17 @@ pub fn create_key_pair() -> (EphemeralSecret, PublicKey) {
     (client_secret, client_public)
 }
 
+fn login_msg(app: &App, client_public: PublicKey) -> ClientMsg {
+    ClientMsg {
+        token: None,
+        body: ClientMsgBody::Login(app.username.clone(), *client_public.as_bytes()),
+        timestamp: Timestamp::from(Utc::now()),
+    }
+}
+
 pub async fn handle_login_success(tui: &mut Tui, app: &mut App) -> SocketClient {
     let (client_secret, client_public) = create_key_pair();
-    let (client, token, server_public_key) = match tui
-        .connect(ClientMsg {
-            token: None,
-            body: ClientMsgBody::Login(app.username.clone(), *client_public.as_bytes()),
-            timestamp: Timestamp::from(Utc::now()),
-        })
-        .await
+    let (client, token, server_public_key) = match tui.connect(login_msg(app, client_public)).await
     {
         Some(x) => x,
         None => panic!("Could not retrieve token from server"),

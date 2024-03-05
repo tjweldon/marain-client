@@ -1,4 +1,4 @@
-use crate::app::{App, LogStyle};
+use crate::{app::App, chat_log::LogStyle};
 use ratatui::{
     layout::Offset,
     prelude::{Frame, Rect, Stylize},
