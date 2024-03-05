@@ -17,6 +17,7 @@ use tokio::{
     task::JoinHandle,
 };
 use tokio_tungstenite::tungstenite::Message;
+use x25519_dalek::PublicKey;
 
 pub type CrosstermTerminal = ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>;
 
@@ -222,7 +223,10 @@ impl Tui {
         self.sender.clone()
     }
 
-    pub async fn connect(&mut self, on_connect: ClientMsg) -> Option<(SocketClient, String)> {
+    pub async fn connect(
+        &mut self,
+        on_connect: ClientMsg,
+    ) -> Option<(SocketClient, String, PublicKey)> {
         let mut client: SocketClient = self.socket_conf.spawn_client().await;
         let socket_sender = client.out_sink.clone();
         socket_sender
@@ -236,9 +240,9 @@ impl Tui {
                 Message::Binary(data) => match bincode::deserialize::<ServerMsg>(&data[..]) {
                     Ok(ServerMsg {
                         status: Status::Yes,
-                        body: ServerMsgBody::LoginSuccess { token },
+                        body: ServerMsgBody::LoginSuccess { token, public_key },
                         ..
-                    }) => Some((client, token)),
+                    }) => Some((client, token, PublicKey::from(public_key))),
                     _ => {
                         log::error!("Login failed, could not deserialize server message: {msg:?}");
                         None

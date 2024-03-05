@@ -1,11 +1,11 @@
 mod app;
+mod shared_secret;
 mod socket_client;
 mod tui_framework;
 mod ui;
 mod update;
 mod user_config;
 
-use chrono::Utc;
 use color_eyre::Result;
 use crossterm::{
     terminal::{enable_raw_mode, EnterAlternateScreen},
@@ -32,23 +32,12 @@ async fn setup() -> Result<(App, Tui)> {
     .default_client();
 
     let mut app = App::new(load_config().await);
-    let (client, token) = match tui
-        .connect(ClientMsg {
-            token: None,
-            body: ClientMsgBody::Login(app.username.clone()),
-            timestamp: Timestamp::from(Utc::now()),
-        })
-        .await
-    {
-        Some(x) => x,
-        None => panic!("Could not retrieve token from server"),
-    };
+    let client = shared_secret::handle_login_success(&mut tui, &mut app).await;
 
     stdout().execute(EnterAlternateScreen)?;
     enable_raw_mode()?;
 
     tui.enter(client).await?;
-    app.token = Some(token);
     app.set_send_chan(tui.get_sender());
 
     Ok((app, tui))
