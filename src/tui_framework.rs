@@ -11,7 +11,7 @@ use crossterm::{
 };
 use futures::{stream::StreamExt, FutureExt};
 use log2 as log;
-use marain_api::prelude::{ClientMsg, ClientMsgBody, Key, ServerMsg, ServerMsgBody, Status};
+use marain_api::prelude::{ClientMsg, ClientMsgBody, ServerMsg, ServerMsgBody, Status};
 use tokio::{
     sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
     task::JoinHandle,
@@ -223,7 +223,10 @@ impl Tui {
         self.sender.clone()
     }
 
-    pub async fn connect(&mut self, on_connect: ClientMsg) -> Option<(SocketClient, String, PublicKey)> {
+    pub async fn connect(
+        &mut self,
+        on_connect: ClientMsg,
+    ) -> Option<(SocketClient, String, PublicKey)> {
         let mut client: SocketClient = self.socket_conf.spawn_client().await;
         let socket_sender = client.out_sink.clone();
         socket_sender

@@ -1,4 +1,3 @@
-use anyhow::Chain;
 use chrono::prelude::*;
 use crossterm::event::KeyCode;
 use log2 as log;
