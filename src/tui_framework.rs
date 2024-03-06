@@ -11,13 +11,15 @@ use crossterm::{
 };
 use futures::{stream::StreamExt, FutureExt};
 use log2 as log;
-use marain_api::prelude::{ClientMsg, ClientMsgBody, ServerMsg, ServerMsgBody, Status};
+use marain_api::prelude::{ClientMsg, ClientMsgBody, Key, ServerMsg, ServerMsgBody, Status};
 use tokio::{
     sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
     task::JoinHandle,
 };
 use tokio_tungstenite::tungstenite::Message;
 use x25519_dalek::PublicKey;
+
+use sphinx::prelude::cbc_encode;
 
 pub type CrosstermTerminal = ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>;
 
@@ -119,9 +121,12 @@ pub struct Tui {
     pub frame_rate: f64,
 
     pub update_rate: f64,
+    shared_secret: Option<[u8; 32]>,
 }
 
 impl Tui {
+    const INIT_VEC: u64 = 0x00000000_00000000;
+
     /// Constructs a new instance of [`Tui`].
     pub fn new(terminal: CrosstermTerminal) -> Self {
         let (sender, receiver) = unbounded_channel::<Event>();
@@ -134,6 +139,7 @@ impl Tui {
             receiver,
             frame_rate: 60.0,
             update_rate: 60.0,
+            shared_secret: None,
         }
     }
 
@@ -141,6 +147,10 @@ impl Tui {
         Self::new(terminal)
             .set_render_freq(config.render_freq)
             .set_update_freq(config.update_freq)
+    }
+
+    pub fn set_shared_secret(&mut self, shared_secret: Key) {
+        self.shared_secret = Some(shared_secret);
     }
 
     /// Fluent setter for the render frequency.
@@ -340,16 +350,39 @@ impl Tui {
         self.task = Some(task);
     }
 
-    pub fn push_binary_msg_to_server(&self, outgoing_msg: ClientMsg) {
+    fn encrypt_outgoing_msg(&self, serialized: Vec<u8>) -> Vec<u8> {
+        match self.shared_secret {
+            Some(k) => match  cbc_encode(k.to_vec(), serialized, Self::INIT_VEC) {
+                Ok(enc) => enc,
+                Err(e) => {
+                    panic!("Failed to encrypt outgoing message with error: {e}");
+                }
+            },
+            None => panic!("No key for encryption of outgoing message.")
+        }
+    }    
+    
+    fn serialize_outgoing_msg(outgoing_msg: ClientMsg) -> Option<Vec<u8>> {
         let serialized = match bincode::serialize(&outgoing_msg) {
             Ok(s) => s.to_owned(),
             Err(e) => {
                 log::error!("Could not serialize chat message {e}");
-                return;
+                return None;
             }
         };
+        Some(serialized)
+    }
+    
+    pub fn push_binary_msg_to_server(&self, outgoing_msg: ClientMsg) {
+        let serialized = match Self::serialize_outgoing_msg(outgoing_msg) {
+            Some(value) => value,
+            None => return,
+        };
+        
+        let encoded = self.encrypt_outgoing_msg(serialized);
+
         if let Some(ref sender) = self.socket_sender.clone() {
-            sender.unbounded_send(Message::Binary(serialized)).unwrap();
+            sender.unbounded_send(Message::Binary(encoded)).unwrap();
         }
     }
 
