@@ -19,7 +19,7 @@ use tokio::{
 use tokio_tungstenite::tungstenite::Message;
 use x25519_dalek::PublicKey;
 
-use sphinx::prelude::{cbc_decode, cbc_encode};
+use sphinx::prelude::{cbc_decode, cbc_encode, get_rng};
 
 pub type CrosstermTerminal = ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>;
 
@@ -351,8 +351,9 @@ impl Tui {
     }
 
     fn encrypt_outgoing_msg(&self, serialized: Vec<u8>) -> Vec<u8> {
+        let rng = get_rng();
         match self.shared_secret {
-            Some(k) => match cbc_encode(k.to_vec(), serialized, Self::INIT_VEC) {
+            Some(k) => match cbc_encode(k.to_vec(), serialized, rng) {
                 Ok(enc) => enc,
                 Err(e) => {
                     panic!("Failed to encrypt outgoing message with error: {e}");
