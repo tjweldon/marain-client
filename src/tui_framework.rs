@@ -19,7 +19,7 @@ use tokio::{
 use tokio_tungstenite::tungstenite::Message;
 use x25519_dalek::PublicKey;
 
-use sphinx::prelude::cbc_encode;
+use sphinx::prelude::{cbc_decode, cbc_encode, get_rng};
 
 pub type CrosstermTerminal = ratatui::Terminal<ratatui::backend::CrosstermBackend<std::io::Stdout>>;
 
@@ -351,17 +351,30 @@ impl Tui {
     }
 
     fn encrypt_outgoing_msg(&self, serialized: Vec<u8>) -> Vec<u8> {
+        let rng = get_rng();
         match self.shared_secret {
-            Some(k) => match  cbc_encode(k.to_vec(), serialized, Self::INIT_VEC) {
+            Some(k) => match cbc_encode(k.to_vec(), serialized, rng) {
                 Ok(enc) => enc,
                 Err(e) => {
                     panic!("Failed to encrypt outgoing message with error: {e}");
                 }
             },
-            None => panic!("No key for encryption of outgoing message.")
+            None => panic!("No key for encryption of outgoing message."),
         }
-    }    
-    
+    }
+
+    pub fn decrypt_incoming_msg(&self, enc: Vec<u8>) -> Vec<u8> {
+        match self.shared_secret {
+            Some(k) => match cbc_decode(k.to_vec(), enc) {
+                Ok(dec) => dec,
+                Err(e) => {
+                    panic!("Failed to decrypt incoming message with error: {e}");
+                }
+            },
+            None => panic!("No key for decryption of incoming message."),
+        }
+    }
+
     fn serialize_outgoing_msg(outgoing_msg: ClientMsg) -> Option<Vec<u8>> {
         let serialized = match bincode::serialize(&outgoing_msg) {
             Ok(s) => s.to_owned(),
@@ -372,13 +385,13 @@ impl Tui {
         };
         Some(serialized)
     }
-    
+
     pub fn push_binary_msg_to_server(&self, outgoing_msg: ClientMsg) {
         let serialized = match Self::serialize_outgoing_msg(outgoing_msg) {
             Some(value) => value,
             None => return,
         };
-        
+
         let encoded = self.encrypt_outgoing_msg(serialized);
 
         if let Some(ref sender) = self.socket_sender.clone() {
