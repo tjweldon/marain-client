@@ -28,7 +28,7 @@ pub async fn handle_login_success(tui: &mut Tui, app: &mut App) -> SocketClient 
         None => panic!("Could not retrieve token from server"),
     };
     let shared_secret = client_secret.diffie_hellman(&server_public_key);
-    app.set_shared_secret(*shared_secret.as_bytes());
+    tui.set_shared_secret(*shared_secret.as_bytes());
     app.store_token(token);
 
     client
