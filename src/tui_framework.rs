@@ -364,7 +364,7 @@ impl Tui {
 
     pub fn decrypt_incoming_msg(&self, enc: Vec<u8>) -> Vec<u8> {
         match self.shared_secret {
-            Some(k) => match cbc_decode(k.to_vec(), enc, Self::INIT_VEC) {
+            Some(k) => match cbc_decode(k.to_vec(), enc) {
                 Ok(dec) => dec,
                 Err(e) => {
                     panic!("Failed to decrypt incoming message with error: {e}");
