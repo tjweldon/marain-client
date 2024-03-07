@@ -1,6 +1,7 @@
 use crate::app::{App, Mode};
 use crate::chat_log::Log;
 use crate::tui_framework::Event;
+use crate::Tui;
 use chrono::{DateTime, Utc};
 use crossterm::event::KeyEvent;
 use marain_api::prelude::{ChatMsg, ServerMsg, ServerMsgBody, Status, Timestamp};
@@ -9,7 +10,7 @@ fn translate_ts(ts: Timestamp) -> DateTime<Utc> {
     Into::<Option<DateTime<Utc>>>::into(ts).unwrap_or(Utc::now())
 }
 
-pub fn update(app: &mut App, event: Event) {
+pub fn update(app: &mut App, tui: &mut Tui, event: Event) {
     match event {
         Event::Tick => {}
 
@@ -31,7 +32,8 @@ pub fn update(app: &mut App, event: Event) {
 
         // Websocket event handling
         Event::Recv(msg) => {
-            match bincode::deserialize::<ServerMsg>(&msg[..]) {
+            let decrypted_msg = tui.decrypt_incoming_msg(msg);
+            match bincode::deserialize::<ServerMsg>(&decrypted_msg[..]) {
                 Ok(deserialized) => {
                     app.push_debug_log(deserialized.clone());
 
@@ -41,11 +43,9 @@ pub fn update(app: &mut App, event: Event) {
                         Status::No(error_msg) => {
                             app.push_log(Log::new("SERVER".into(), error_msg.clone()));
                             log::error!("The computer said no: {error_msg}");
-                            return;
                         }
                         Status::JustNo => {
                             app.push_log(Log::new("CLIENT".into(), "Failed to login".into()));
-                            return;
                         }
                     }
                 }

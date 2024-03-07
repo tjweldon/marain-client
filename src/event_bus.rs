@@ -42,7 +42,7 @@ pub fn dispatch(app: &mut App, tui: &mut Tui, event: Event) -> Result<()> {
         }
         e => {
             log::info!("No handling for {e:?}");
-            update(app, e);
+            update(app, tui, e);
         }
     }
     Ok(())

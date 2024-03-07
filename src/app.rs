@@ -120,8 +120,6 @@ impl App {
         }
     }
 
-    
-
     pub fn set_send_chan(&mut self, chan: UnboundedSender<Event>) {
         self.command_sink = Some(chan);
     }
