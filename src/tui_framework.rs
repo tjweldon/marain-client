@@ -125,8 +125,6 @@ pub struct Tui {
 }
 
 impl Tui {
-    const INIT_VEC: u64 = 0x00000000_00000000;
-
     /// Constructs a new instance of [`Tui`].
     pub fn new(terminal: CrosstermTerminal) -> Self {
         let (sender, receiver) = unbounded_channel::<Event>();

@@ -90,5 +90,9 @@ fn handle_server_msg(app: &mut App, deserialized: ServerMsg) {
                 .collect();
             app.replace_logs(chat_logs);
         }
+
+        ServerMsgBody::Notification { body } => {
+            app.push_log(Log::new("SERVER".to_owned(), body).at(dt))
+        }
     }
 }
