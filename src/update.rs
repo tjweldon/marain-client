@@ -83,7 +83,13 @@ fn handle_server_msg(app: &mut App, deserialized: ServerMsg) {
             "SERVER".into(),
             "The time is: ".to_string() + &dt.format("%Y-%m-%D %H:%M:%S").to_string(),
         )),
-        ServerMsgBody::RoomData { logs, occupants, room_name, .. } => {
+        ServerMsgBody::RoomData {
+            logs,
+            notifications,
+            occupants,
+            room_name,
+            ..
+        } => {
             let chat_logs: Vec<Log> = logs
                 .iter()
                 .map(|cm| {
@@ -91,7 +97,14 @@ fn handle_server_msg(app: &mut App, deserialized: ServerMsg) {
                         .at(translate_ts(cm.timestamp.clone()))
                 })
                 .collect();
-            app.update_room(chat_logs, occupants, dt, room_name);
+            let notifications: Vec<Log> = notifications
+                .iter()
+                .map(|n| {
+                    Log::new(n.sender.clone(), n.content.clone())
+                        .at(translate_ts(n.timestamp.clone()))
+                })
+                .collect();
+            app.update_room(chat_logs, notifications, occupants, dt, room_name);
         }
 
         ServerMsgBody::Notification { body } => {
