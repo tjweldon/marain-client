@@ -439,8 +439,21 @@ impl App {
         }
     }
 
-    pub fn update_room(&mut self, chat_logs: Vec<Log>, occupants: Vec<String>, dt: DateTime<Utc>, room_name: String) {
-        self.room_state = RoomData { timestamp: dt, occupants, room_name };
+    pub fn update_room(
+        &mut self,
+        mut chat_logs: Vec<Log>,
+        notifications: Vec<Log>,
+        occupants: Vec<String>,
+        dt: DateTime<Utc>,
+        room_name: String,
+    ) {
+        self.room_state = RoomData {
+            timestamp: dt,
+            occupants,
+            room_name,
+        };
+        chat_logs.extend(notifications);
+        chat_logs.sort_by(|a, b| a.ts.cmp(&b.ts));
         self.replace_logs(chat_logs);
     }
 
