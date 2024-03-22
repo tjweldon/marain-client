@@ -89,6 +89,23 @@ impl Command {
 }
 
 #[derive(Debug)]
+pub struct RoomData {
+    pub timestamp: DateTime<Utc>,
+    pub occupants: Vec<String>,
+    pub room_name: String,
+}
+
+impl Default for RoomData {
+    fn default() -> Self {
+        Self {
+            timestamp: Utc::now(),
+            occupants: vec![],
+            room_name: "None".into(),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub struct App {
     pub should_quit: bool,
     pub show_debug: bool,
@@ -101,6 +118,7 @@ pub struct App {
     pub username: String,
     pub token: Option<String>,
     pub command_sink: Option<UnboundedSender<Event>>,
+    pub room_state: RoomData,
 }
 
 impl App {
@@ -117,6 +135,7 @@ impl App {
             username: config.get_username(),
             token: None,
             command_sink: None,
+            room_state: RoomData::default(),
         }
     }
 
@@ -418,6 +437,11 @@ impl App {
         if self.log_count() > 100 {
             self.logs.pop_back();
         }
+    }
+
+    pub fn update_room(&mut self, chat_logs: Vec<Log>, occupants: Vec<String>, dt: DateTime<Utc>, room_name: String) {
+        self.room_state = RoomData { timestamp: dt, occupants, room_name };
+        self.replace_logs(chat_logs);
     }
 
     pub fn replace_logs(&mut self, chat_logs: Vec<Log>) {

@@ -39,11 +39,14 @@ pub fn update(app: &mut App, tui: &mut Tui, event: Event) {
 
                     // Handle any errors
                     match deserialized.status {
+                        // Happy path!
                         Status::Yes => handle_server_msg(app, deserialized),
+                        // sadger
                         Status::No(error_msg) => {
                             app.push_log(Log::new("SERVER".into(), error_msg.clone()));
                             log::error!("The computer said no: {error_msg}");
                         }
+                        // sadgest
                         Status::JustNo => {
                             app.push_log(Log::new("CLIENT".into(), "Failed to login".into()));
                         }
@@ -80,7 +83,7 @@ fn handle_server_msg(app: &mut App, deserialized: ServerMsg) {
             "SERVER".into(),
             "The time is: ".to_string() + &dt.format("%Y-%m-%D %H:%M:%S").to_string(),
         )),
-        ServerMsgBody::RoomData { logs, .. } => {
+        ServerMsgBody::RoomData { logs, occupants, room_name, .. } => {
             let chat_logs: Vec<Log> = logs
                 .iter()
                 .map(|cm| {
@@ -88,7 +91,7 @@ fn handle_server_msg(app: &mut App, deserialized: ServerMsg) {
                         .at(translate_ts(cm.timestamp.clone()))
                 })
                 .collect();
-            app.replace_logs(chat_logs);
+            app.update_room(chat_logs, occupants, dt, room_name);
         }
 
         ServerMsgBody::Notification { body } => {

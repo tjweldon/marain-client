@@ -7,28 +7,26 @@ use ratatui::{
     widgets::{Block, Padding, Paragraph, Wrap},
 };
 
-fn h_split(frame: &mut Frame, rows: usize) -> [Rect; 2] {
-    let h = frame.size().height as i32;
+fn h_split(frame: &Rect, rows: usize) -> [Rect; 2] {
+    let h = frame.height as i32;
 
     let top_area = frame
-        .size()
         .offset(Offset {
             x: 0,
             y: rows as i32,
         })
-        .intersection(frame.size())
+        .intersection(frame.clone())
         .offset(Offset {
             x: 0,
             y: -(rows as i32),
         });
 
     let bottom_area = frame
-        .size()
         .offset(Offset {
             x: 0,
             y: h - (rows as i32),
         })
-        .intersection(frame.size());
+        .intersection(frame.clone());
 
     [top_area, bottom_area]
 }
@@ -63,6 +61,23 @@ fn top_help_widget(app: &App) -> Paragraph {
         .on_black()
 }
 
+fn room_info_widget(app: &App) -> Paragraph {
+    let block = Block::bordered().title(Span::styled(format!("ROOM: {}", app.room_state.room_name), Style::new().fg(Color::White)));
+
+    let mut text = "".to_string();
+    let mut prefix: String = "".into();
+    for username in &app.room_state.occupants {
+        text = text + &(prefix + username);
+        prefix = "\n".into();
+    }
+
+    Paragraph::new(text)
+    .block(block)
+    .green().on_black()
+    .wrap(Wrap { trim: false })
+
+}
+
 fn chat_log_widget(app: &App, area: Rect) -> Paragraph {
     let block = Block::bordered().title(Span::styled("LOGS", Style::new().fg(Color::White)));
     let text = app.render_logs(
@@ -87,10 +102,13 @@ fn textarea_widget(app: &App) -> Paragraph {
 }
 
 pub fn render(app: &App, frame: &mut Frame) {
-    let [top_area, bottom_area] = h_split(frame, 6);
+    let [top_area, bottom_area] = h_split(&frame.size(), 6);
     let [top_left, top_right] = v_split(top_area);
+    let [top_top_right, btm_top_right] = h_split(&top_right, (top_right.height/2) as usize);
 
-    frame.render_widget(top_help_widget(app), top_right);
+    frame.render_widget(top_help_widget(app), top_top_right);
+    frame.render_widget(room_info_widget(app), btm_top_right);
     frame.render_widget(chat_log_widget(app, top_left.clone()), top_left);
     frame.render_widget(textarea_widget(app), bottom_area);
+    
 }
